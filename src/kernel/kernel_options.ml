@@ -89,8 +89,9 @@ module Machine = struct
         ("arm32", Machine.(armv7 LittleEndian));
         ("aarch64", Machine.(armv8 LittleEndian));
         ("ppc64", Machine.ppc64 BigEndian);
-        ("riscv", Machine.riscv `x32);
-        ("riscv64", Machine.riscv `x64);
+        ("riscv", Machine.riscv `x32 `RV32C);
+        ("riscvami", Machine.riscv `x32 `RV32AMi);
+        ("riscv64", Machine.riscv `x64 `RV64C);
         ("z80", Machine.z80);
         ("unknown", Machine.unknown);
       ]

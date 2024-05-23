@@ -76,6 +76,9 @@ let x86_decode reader (addr : Virtual_address.t) =
 let riscv32_decode reader vaddr =
   generic_decode reader Riscv_to_dba.decode_32 (fun x -> x) vaddr
 
+let riscv32ami_decode reader vaddr =
+  generic_decode reader Riscv_to_dba.decode_32_ami (fun x -> x) vaddr
+
 let riscv64_decode reader vaddr =
   generic_decode reader Riscv_to_dba.decode_64 (fun x -> x) vaddr
 
@@ -107,8 +110,9 @@ let register_decoder isa decode convert =
       generic_decode reader decode convert vaddr)
 
 let () = M.add tbl Machine.x86 x86_decode
-let () = M.add tbl (Machine.riscv `x32) riscv32_decode
-let () = M.add tbl (Machine.riscv `x64) riscv64_decode
+let () = M.add tbl (Machine.riscv `x32 `RV32C) riscv32_decode
+let () = M.add tbl (Machine.riscv `x32 `RV32AMi) riscv32ami_decode
+let () = M.add tbl (Machine.riscv `x64 `RV64C) riscv64_decode
 let () = M.add tbl Machine.z80 z80_decode
 
 let () =

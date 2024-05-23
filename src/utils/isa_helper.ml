@@ -1567,8 +1567,8 @@ let get_arch () : (module ARCH) =
   | ARM { rev = `v7; endianness = LittleEndian } -> (module ARM)
   | ARM { rev = `v8; endianness = LittleEndian } -> (module AARCH64)
   | PPC { bits = `x64; _ } -> (module PPC64)
-  | RISCV { bits = `x32 } -> (module RISCV32)
-  | RISCV { bits = `x64 } -> (module RISCV64)
+  | RISCV { bits = `x32; _ } -> (module RISCV32)
+  | RISCV { bits = `x64; _ } -> (module RISCV64)
   | Z80 -> (module Z80)
   | _ ->
       (* TODO *)

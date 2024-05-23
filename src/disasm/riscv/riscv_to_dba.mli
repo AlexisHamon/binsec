@@ -24,6 +24,11 @@ val decode_32 :
 (** [decode_32 r addr] decodes what is at address [addr] in reader [r]
     using ISA RISC-V32I with standard extensions C and M *)
 
+val decode_32_ami :
+  Lreader.t -> Virtual_address.t -> Instruction.Generic.t * Dhunk.t
+(** [decode_32 r addr] decodes what is at address [addr] in reader [r]
+    using ISA RISC-V32I with extension Architectural Mimicry *)
+
 val decode_64 :
   Lreader.t -> Virtual_address.t -> Instruction.Generic.t * Dhunk.t
 (** [decode_64 r addr] decodes what is at address [addr] in reader [r]

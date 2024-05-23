@@ -140,7 +140,10 @@ module Ehdr = struct
     | 0x3e -> Machine.amd64
     | 0xb7 -> Machine.armv8 endianness
     (* | 0xcb -> Machine.XCORE *)
-    | 0xf3 -> Machine.riscv (mode :> [ `x128 | `x64 | `x32 ])
+    | 0xf3 ->
+      Machine.riscv (mode :> [ `x128 | `x64 | `x32 ]) (match mode with
+        | `x32 -> `RV32C
+        | `x64 -> `RV64C )
     | _ -> Machine.unknown
 
   let read_32 t ident =

@@ -1684,7 +1684,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           fail msg
   end
 
-  let lift st bits =
+  let lift st bits = 
     if is_compressed bits then Compressed.lift (D_status.switch16 st) bits
     else Uncompressed.lift (D_status.switch32 st) bits
 
@@ -1751,3 +1751,76 @@ end
 module Riscv64_to_Dba = Riscv_to_Dba (Reg64)
 
 let decode_64 = Riscv64_to_Dba.decode
+
+(** Instruction set decoder *)
+module Riscv32AMi_to_Dba = struct
+include Riscv_to_Dba (Reg32)
+
+let string_of_AMimodifier bv =
+  match Bv.to_uint bv with
+    | 0 -> "g."
+    | 1 -> "m."
+    | 2 -> "p."
+    | 3 -> ""
+    | _ -> assert(false) (* AMi modifier bit vector should have size 2 *)
+
+let lift st bits = 
+  let modifiers = Bitset.restrict ~lo:0 ~hi:1 bits in 
+  L.debug "Start bits : %s" (Bv.to_bitstring bits); 
+  let _rebits = (Bv.set_bit(Bv.set_bit bits 0) 1) in
+  L.debug "Restr2 bits : %s" (Bv.to_bitstring modifiers);
+  let s = Uncompressed.lift (D_status.switch32 st) (_rebits) in
+  match s with
+  | Inst i -> 
+    let open Inst in
+    L.debug "Mnemonic : %s" ((string_of_AMimodifier modifiers) ^ i.mnemonic);
+    Inst {
+      mnemonic=(string_of_AMimodifier modifiers) ^ i.mnemonic;
+      opcode=i.opcode;
+      dba=i.dba;
+    }
+  | _ -> s
+
+let decode reader vaddr =
+  let size, bits =
+    (* TODO: will break if I am wrong -- cursor is always well positioned *)
+
+    (* First we position the cursor at the right address.
+        Then we peek a 16 bits value to check out if the opcode is compressed or
+        not.
+        If so, just read 16 bits and decode the compressed opcode.
+        Otherwise, the opcode is 32 bits long. Decode an uncompressed opcode.
+    *)
+    let bits = Lreader.Peek.bv16 reader in
+    L.debug "RISC-V peeked bits %a" Bv.pp_hex bits;
+    (4, Lreader.Read.bv32 reader)
+  in
+  L.debug "%a: Decoding RISC-V bits %a (%d)" 
+    Bv.pp_hex (Bv.of_int ~size:32 (Lreader.get_pos reader))
+    Bv.pp_hex bits (uint bits);
+  let st = D_status.create vaddr in
+  let s = lift st bits in
+  match s with
+  | Unhandled mnemonic_hint ->
+      let opcode = Bitvector.to_hexstring bits in
+      let mnemonic = Mnemonic.unsupported ~mnemonic_hint () in
+      let ginst = Instruction.Generic.create size opcode mnemonic in
+      L.debug "Unhandled %s" mnemonic_hint;
+      (ginst, Dhunk.empty)
+  | Unknown _ ->
+      let opcode = Bitvector.to_hexstring bits in
+      let mnemonic = Mnemonic.unknown in
+      let ginst = Instruction.Generic.create size opcode mnemonic in
+      L.debug "Unknown %s" opcode;
+      (ginst, Dhunk.empty)
+  | Inst i ->
+      let open Inst in
+      let opcode = Bitvector.to_hexstring i.opcode in
+      let mnemonic = Mnemonic.supported i.mnemonic Format.pp_print_string in
+      let ginst = Instruction.Generic.create size opcode mnemonic in
+      let dhunk = D.Block.to_dba i.dba in
+      L.debug "@[<hov>Dba:@ %a@]@]" Dhunk.pp dhunk;
+      (ginst, dhunk)
+end
+
+let decode_32_ami = Riscv32AMi_to_Dba.decode

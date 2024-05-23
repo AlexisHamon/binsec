@@ -21,12 +21,13 @@
 
 type bitwidth = [ `x16 | `x32 | `x64 | `x128 ]
 type endianness = LittleEndian | BigEndian
+type riscv_isa = [`RV32C | `RV64C | `RV32AMi ]
 
 type isa =
   | Unknown
   | ARM of { rev : [ `v7 | `v8 ]; endianness : endianness }
   | PPC of { bits : [ `x32 | `x64 ]; endianness : endianness }
-  | RISCV of { bits : [ `x32 | `x64 | `x128 ] }
+  | RISCV of { bits : [ `x32 | `x64 | `x128 ]; isa : riscv_isa }
   | X86 of { bits : [ `x16 | `x32 | `x64 ] }
   | Z80
 
@@ -109,7 +110,7 @@ let amd64 = X86 { bits = `x64 }
 let armv7 endianness = ARM { rev = `v7; endianness }
 let armv8 endianness = ARM { rev = `v8; endianness }
 let ppc64 endianness = PPC { bits = `x64; endianness }
-let riscv bits = RISCV { bits }
+let riscv bits isa = RISCV { bits; isa }
 let x86 = X86 { bits = `x32 }
 let z80 = Z80
 let unknown = Unknown
