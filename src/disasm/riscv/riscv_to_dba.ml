@@ -1776,7 +1776,7 @@ let lift st bits =
     L.debug "Mnemonic : %s" ((string_of_AMimodifier modifiers) ^ i.mnemonic);
     Inst {
       mnemonic=(string_of_AMimodifier modifiers) ^ i.mnemonic;
-      opcode=i.opcode;
+      opcode=bits;
       dba=i.dba;
     }
   | _ -> s
