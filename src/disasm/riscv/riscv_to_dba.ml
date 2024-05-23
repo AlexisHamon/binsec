@@ -1716,13 +1716,13 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         let opcode = Bitvector.to_hexstring bits in
         let mnemonic = Mnemonic.unsupported ~mnemonic_hint () in
         let ginst = Instruction.Generic.create size opcode mnemonic in
-        L.debug "unhandled %s" mnemonic_hint;
+        L.debug "Unhandled %s" mnemonic_hint;
         (ginst, Dhunk.empty)
     | Unknown _ ->
         let opcode = Bitvector.to_hexstring bits in
         let mnemonic = Mnemonic.unknown in
         let ginst = Instruction.Generic.create size opcode mnemonic in
-        L.debug "unknown %s" opcode;
+        L.debug "Unknown %s" opcode;
         (ginst, Dhunk.empty)
     | Inst i ->
         let open Inst in
