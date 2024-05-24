@@ -80,3 +80,5 @@ val to_string : t -> string
 (** {3 Printers} *)
 
 include Sigs.PRINTABLE with type t := t
+
+val pp_opcode : Format.formatter -> t -> unit

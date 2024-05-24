@@ -133,4 +133,10 @@ let pp ppf t =
   iter (fun by -> Format.fprintf ppf "%02x@ " by) t;
   pp_close_box ppf ()
 
+let pp_opcode ppf t =
+  let open Format in
+  pp_open_hbox ppf ();
+  iter (fun by -> Format.fprintf ppf "%02x@ " by) (rev t);
+  pp_close_box ppf ()
+
 let to_string t = Format.asprintf "%a" pp t
