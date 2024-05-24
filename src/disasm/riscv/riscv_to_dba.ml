@@ -1640,12 +1640,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       | 7 -> I.Stype.bgeu st opcode
       | _ -> assert false
 
-    let fetch_opcode_operator bits = uint @@ Bitset.restrict ~lo:0 ~hi:6 bits
+    let fetch_opcode_operator bits = uint @@ (Bitset.restrict ~lo:2 ~hi:6 bits)
 
     let lift st opcode =
       let opc_op = fetch_opcode_operator opcode in
-      L.debug "Opcode operator %x" opc_op;
-      match opc_op with
+      L.debug "Opcode operator %x" (opc_op*4+3);
+      match (opc_op*4+3) with
       | 3 -> lift_0x3 st opcode
       | 0x0f -> unh "fence"
       | 0x73 -> unh "ecal/ebreak/csrr(w|s|c|/unimp...)"
@@ -1763,13 +1763,11 @@ let string_of_AMimodifier bv =
     | 2 -> "p."
     | 3 -> ""
     | _ -> assert(false) (* AMi modifier bit vector should have size 2 *)
-
+  
 let lift st bits = 
   let modifiers = Bitset.restrict ~lo:0 ~hi:1 bits in 
-  L.debug "Start bits : %s" (Bv.to_bitstring bits); 
-  let _rebits = (Bv.set_bit(Bv.set_bit bits 0) 1) in
-  L.debug "Restr2 bits : %s" (Bv.to_bitstring modifiers);
-  let s = Uncompressed.lift (D_status.switch32 st) (_rebits) in
+  L.debug "Modifiers bits : %s" (Bv.to_bitstring modifiers);
+  let s = Uncompressed.lift (D_status.switch32 st) (bits) in
   match s with
   | Inst i -> 
     let open Inst in
