@@ -75,9 +75,10 @@ let pp_fallthrough, register_builtin_pp =
       | Debug msg -> Format.fprintf ppf "debug(%s)" msg
       | Print output -> Format.fprintf ppf "print %a" Output.pp output
       | Instruction inst ->
-          Format.fprintf ppf "%a %a" Virtual_address.pp
-            (Instruction.address inst) Mnemonic.pp
-            (Instruction.mnemonic inst)
+          Format.fprintf ppf "%a: %a %a" 
+            Virtual_address.pp (Instruction.address inst)
+            Binstream.pp_opcode (Instruction.opcode inst)
+            Mnemonic.pp (Instruction.mnemonic inst)
       | Hook { addr; info } ->
           Format.fprintf ppf "%a %s" Virtual_address.pp addr info
       | Assign { var = { name; _ }; rval } ->
