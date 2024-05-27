@@ -195,6 +195,15 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       | Lab (l, i) -> Format.fprintf ppf "@[<h>:%s: %a@]" l pp i
       | Nop -> Format.pp_print_string ppf "nop"
 
+    module ActAddrSet = Stdlib.Set.Make (Z)  
+
+    let actoffaddrset = ref (ActAddrSet.empty)
+    let addAddr addr = 
+      actoffaddrset := ActAddrSet.add (Virtual_address.to_bigint addr) (!actoffaddrset)
+    
+    let isAddr addr = 
+      ActAddrSet.mem (Virtual_address.to_bigint addr) !actoffaddrset
+
     module Block = struct
       type t = { sealed : bool; insts : inst list }
 
@@ -445,6 +454,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           !!(ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
         | `Activating ->
           let jump_addr = jmp_offset st offset in
+          addAddr jump_addr;
           assert(Virtual_address.to_bigint st.addr < Virtual_address.to_bigint jump_addr);
           let jneg = aoff st.addr in
           let jpos = aoff jump_addr in 
@@ -712,6 +722,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | `Activating ->
           let jsta = aoff st.addr in
           let jend = aoff (D_status.next st) in 
+          addAddr (D_status.next st);
           !!(ini (reg_bv dst <-- jend)
           +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
           +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
@@ -744,6 +755,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
             | `Activating ->
               let jsta = aoff st.addr in
               let jend = aoff (D_status.next st) in 
+              addAddr (D_status.next st);
               base +++ (r <-- next)
               +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
               +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
