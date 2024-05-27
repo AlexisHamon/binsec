@@ -501,10 +501,10 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | `Persistent -> "p."
         | `Standard -> "s."
     
-    let standardinst ~std_md ~dst ~de = 
+    let standardinst st ~std_md ~dst ~de = 
       (* TODO check bitsize *)
       let tmpvar = De.v ((Dba.Var.create "LoadAMi" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty)) in
-      match std_md with
+      (match std_md with
         | `Ghost ->
           ini (tmpvar <-- de)
           +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
@@ -515,11 +515,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | `Standard ->
           ini (tmpvar <-- de)
           +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+      ) |> seal (D_status.next st)
     
     let standard mnemonic st ~md ~dst ~de = 
       let std_md = standardModifier_of_md md in
       let prefix = string_of_standardModifier std_md in
-      (prefix^mnemonic, standardinst ~std_md ~dst ~de |> seal (D_status.next st))
+      (prefix^mnemonic, standardinst st ~std_md ~dst ~de)
 
 
     let slt name f st ~md ~dst ~src ~imm =
@@ -533,7 +534,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let sltiu = slt "sltiu" De.slt
 
     (** add with immediate: dst = src + imm *)
-    let addi st ~dst ~src ~imm =
+    let addi st ~md ~dst ~src ~imm =
       let dst_e = reg_bv dst in
       let do_seal = seal (D_status.next st) in
       (* nop when dst is zero *)
@@ -545,10 +546,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
             Printf.sprintf "mv %s,%s" (reg_name dst) (reg_name src)
           else op_imm "addi" ~dst ~src ~imm
         in
-        (mnemonic, do_seal (ini (dst_e <-- De.add src_e (mk_imm imm))))
+        standard mnemonic st
+        ~md ~dst
+        ~de:(De.add src_e (mk_imm imm))
 
     (** add word with immediate: dst = sign_extend (src[31:0] + imm) *)
-    let addiw st ~dst ~src ~imm =
+    let addiw st ~md ~dst ~src ~imm =
       assert_mode_is_64 "addiw";
       let dst_e = reg_bv dst in
       let do_seal = seal (D_status.next st) in
@@ -557,10 +560,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       else
         let src_e = reg_bv src in
         let mnemonic = op_imm "addiw" ~dst ~src ~imm in
-        ( mnemonic,
-          do_seal
-            (ini (dst_e <-- sext (De.add (to_32 src_e) (mk_imm ~size:32 imm))))
-        )
+        standard mnemonic st
+        ~md ~dst
+        ~de:(sext (De.add (to_32 src_e) (mk_imm ~size:32 imm)))
 
     let logicali name logop st ~md ~dst ~src ~imm =
       standard (op_imm name ~dst ~src ~imm) st
@@ -623,23 +625,20 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let eq_minus_one e = De.equal e (minus_one (De.size_of e))
     let eq_min_int e = De.equal e (min_int (De.size_of e))
 
-    let _div ?on_overflow ~on_div_by_zero name f st ~dst ~src1 ~src2 =
-      let dba =
-        let divisor = reg_bv src2 in
-        let dividend = reg_bv src1 in
-        let e =
-          De.ite (eq_zero divisor) on_div_by_zero
-            (match on_overflow with
-            | Some of_e ->
-                De.ite
-                  (De.logand (eq_minus_one divisor) (eq_min_int dividend))
-                  of_e (f dividend divisor)
-            | None -> f dividend divisor)
-        in
-        ini (reg_bv dst <-- e) |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+    let _div ?on_overflow ~on_div_by_zero name f st ~md ~dst ~src1 ~src2 =
+      let divisor = reg_bv src2 in
+      let dividend = reg_bv src1 in
+      let e =
+        De.ite (eq_zero divisor) on_div_by_zero
+          (match on_overflow with
+          | Some of_e ->
+              De.ite
+                (De.logand (eq_minus_one divisor) (eq_min_int dividend))
+                of_e (f dividend divisor)
+          | None -> f dividend divisor)
+      in standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:e
 
     let div =
       _div ~on_overflow:(min_int mode_size)
@@ -648,34 +647,31 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let divu =
       _div ~on_div_by_zero:(De.constant (Bv.max_ubv mode_size)) "divu" De.udiv
 
-    let rem st ~dst ~src1 ~src2 =
+    let rem st ~md ~dst ~src1 ~src2 =
       _div ~on_div_by_zero:(reg_bv src1) ~on_overflow:(De.zeros mode_size) "rem"
-        De.smod st ~dst ~src1 ~src2
+        De.smod st ~md ~dst ~src1 ~src2
 
-    let remu st ~dst ~src1 ~src2 =
-      _div ~on_div_by_zero:(reg_bv src1) "remu" De.umod st ~dst ~src1 ~src2
+    let remu st ~md ~dst ~src1 ~src2 =
+      _div ~on_div_by_zero:(reg_bv src1) "remu" De.umod st ~md ~dst ~src1 ~src2
 
     (** 32 bit division in 64 bit mode - same semantics as 32 bit division
       with a final sign extension *)
-    let _divw ?on_overflow ~on_div_by_zero name f st ~dst ~src1 ~src2 =
+    let _divw ?on_overflow ~on_div_by_zero name f st ~md ~dst ~src1 ~src2 =
       assert_mode_is_64 name;
-      let dba =
-        let divisor = to_32 (reg_bv src2) in
-        let dividend = to_32 (reg_bv src1) in
-        let res = De.sext mode_size (f dividend divisor) in
-        let e =
-          De.ite (eq_zero divisor) on_div_by_zero
-            (match on_overflow with
-            | Some of_e ->
-                De.ite
-                  (De.logand (eq_minus_one divisor) (eq_min_int dividend))
-                  of_e res
-            | None -> res)
-        in
-        ini (reg_bv dst <-- sext e) |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+      let divisor = to_32 (reg_bv src2) in
+      let dividend = to_32 (reg_bv src1) in
+      let res = De.sext mode_size (f dividend divisor) in
+      let e =
+        De.ite (eq_zero divisor) on_div_by_zero
+          (match on_overflow with
+          | Some of_e ->
+              De.ite
+                (De.logand (eq_minus_one divisor) (eq_min_int dividend))
+                of_e res
+          | None -> res)
+      in standard (op3_str ~name ~dst ~src1 ~src2) st
+      ~md ~dst
+      ~de:(sext e)
 
     let divw =
       _divw
@@ -685,12 +681,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let divuw =
       _divw ~on_div_by_zero:(De.constant (Bv.max_ubv mode_size)) "divuw" De.udiv
 
-    let remw st ~dst ~src1 ~src2 =
+    let remw st ~md ~dst ~src1 ~src2 =
       _divw ~on_div_by_zero:(reg_bv src1) ~on_overflow:(De.zeros mode_size)
-        "remw" De.smod st ~dst ~src1 ~src2
+        "remw" De.smod st ~md ~dst ~src1 ~src2
 
-    let remuw st ~dst ~src1 ~src2 =
-      _divw ~on_div_by_zero:(reg_bv src1) "remuw" De.umod st ~dst ~src1 ~src2
+    let remuw st ~md ~dst ~src1 ~src2 =
+      _divw ~on_div_by_zero:(reg_bv src1) "remuw" De.umod st ~md ~dst ~src1 ~src2
 
     let slt_f name cmp st ~md ~dst ~src1 ~src2 =
       standard (op3_str ~name ~dst ~src1 ~src2) st
@@ -740,8 +736,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       (mnemonic, dba)
 
     (** instr_size is the size in bytes, so 2 for compressed and 4 for normal *)
-    let jalr st ~md ~instr_size ~dst ~src ~offset =
-      ignore(md);
+    let jalr st ~instr_size ~dst ~src ~offset =
       let jump_addr =
         let _offset = Z.to_int (Bitvector.signed_of offset) in
         Virtual_address.add_int instr_size (D_status.addr st)
@@ -772,26 +767,24 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         ~md ~dst
         ~de:(aoff (D_status.addr st) ~offset:offset)
 
-    let lui st ~dst ~md ~offset =
+    let lui st ~md ~dst ~offset =
       standard (Printf.sprintf "lui %s,%s" (reg_name dst) (Bitvector.to_hexstring offset)) st
         ~md ~dst
         ~de:(De.sext mode_size
         (mk_imm ~size:32 (Bv.append offset (Bv.zeros 12))))
 
-    let shift_immediate shop st ~dst ~src ~shamt =
-      ini (reg_bv dst <-- shop (reg_bv src) (mk_cst Bv.extend shamt))
-      |> seal (D_status.next st)
+    let shift_immediate shop st ~md ~dst ~src ~shamt =
+      let std_md = standardModifier_of_md md in
+      standardinst st ~std_md ~dst ~de:(shop (reg_bv src) (mk_cst Bv.extend shamt))
 
     let slli = shift_immediate De.shift_left
     let srli = shift_immediate De.shift_right
     let srai = shift_immediate De.shift_right_signed
 
-    let shift_immediate_word shop st ~dst ~src ~shamt =
+    let shift_immediate_word shop st ~md ~dst ~src ~shamt =
       assert_mode_is_64 "shift word (slliw/srliw/sraiw)";
-      ini
-        (reg_bv dst
-        <-- sext (shop (to_32 (reg_bv src)) (mk_cst ~size:32 Bv.extend shamt)))
-      |> seal (D_status.next st)
+      let std_md = standardModifier_of_md md in
+      standardinst st ~std_md ~dst ~de:(sext (shop (to_32 (reg_bv src)) (mk_cst ~size:32 Bv.extend shamt)))
 
     let slliw = shift_immediate_word De.shift_left
     let srliw = shift_immediate_word De.shift_right
