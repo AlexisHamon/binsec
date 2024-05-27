@@ -687,21 +687,44 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let srlw = shift_f_w "srlw" De.shift_right
     let sraw = shift_f_w "sraw" De.shift_right_signed
 
+    let jalModifier_of_md md =
+      match Bv.to_uint md with
+        | 3 -> `Persistent
+        | 1 -> `Activating
+        | _ -> assert(false) 
+        (* AMi modifier bit vector should have size 2 *)
+        (* AMi modifier store bit should only be persistent *)
+    let string_of_jalModifier md = 
+      match md with
+        | `Persistent -> "p."
+        | `Activating -> "a."
+      
     let jal st ~md ~dst ~offset =
-      ignore(md); ignore(assert(false));
+      let jal_md = jalModifier_of_md md in
       let jmp_addr =
         let offset = Z.to_int (Bitvector.signed_of offset) in
         Virtual_address.add_int offset (D_status.addr st)
       in
-      let dba =
-        !!(ini (reg_bv dst <-- aoff (D_status.next st)) +++ vajmp jmp_addr)
-      in
-      let mnemonic = Format.asprintf "jal %a" Virtual_address.pp jmp_addr in
+      let dba = match jal_md with 
+        | `Persistent -> 
+          !!(ini (reg_bv dst <-- aoff (D_status.next st)) 
+          +++ vajmp jmp_addr)
+        | `Activating ->
+          let jsta = aoff st.addr in
+          let jend = aoff (D_status.next st) in 
+          !!(ini (reg_bv dst <-- jend)
+          +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
+          +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
+          +++ (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jsta (mimicSta))
+          +++ (mimicCount <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.ones 32) (mimicCount)) 
+          +++ vajmp jmp_addr)
+      in 
+      let prefix = string_of_jalModifier jal_md in 
+      let mnemonic = Format.asprintf "%sjal %a" prefix Virtual_address.pp jmp_addr in
       (mnemonic, dba)
 
     (** instr_size is the size in bytes, so 2 for compressed and 4 for normal *)
     let jalr st ~md ~instr_size ~dst ~src ~offset =
-      ignore(md); ignore(assert(false));
       let jump_addr =
         let _offset = Z.to_int (Bitvector.signed_of offset) in
         Virtual_address.add_int instr_size (D_status.addr st)
