@@ -430,7 +430,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | _ -> assert(false) 
         (* AMi modifier bit vector should have size 2 *)
         (* AMi modifier store bit should only be persistent *)
-    let string_of_loadModifier md = 
+    let string_of_branchModifier md = 
       match md with
         | `Persistent -> "p."
         | `ConstantTime -> "ct."
@@ -466,7 +466,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let dba =
         branchinst cmp st ~md_branch ~src1 ~src2 ~offset  
       in
-      let prefix = string_of_loadModifier md_branch in
+      let prefix = string_of_branchModifier md_branch in
       let mnemonic =
         (* If the second source register is zero then print special 'z' form of
            operator. *)
