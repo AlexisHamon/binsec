@@ -725,6 +725,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     (** instr_size is the size in bytes, so 2 for compressed and 4 for normal *)
     let jalr st ~md ~instr_size ~dst ~src ~offset =
+      let jal_md = jalModifier_of_md md in
       let jump_addr =
         let _offset = Z.to_int (Bitvector.signed_of offset) in
         Virtual_address.add_int instr_size (D_status.addr st)
@@ -737,7 +738,17 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         if is_x0 r then base
         else
           let next = aoff jump_addr in
-          base +++ (r <-- next)
+          match jal_md with
+            | `Persistent ->
+              base +++ (r <-- next)
+            | `Activating ->
+              let jsta = aoff st.addr in
+              let jend = aoff (D_status.next st) in 
+              base +++ (r <-- next)
+              +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
+              +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
+              +++ (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jsta (mimicSta))
+              +++ (mimicCount <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.ones 32) (mimicCount)) 
       in
       let dba = !!(sr +++ ejmp temp) in
       let mnemonic =
@@ -746,7 +757,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           Format.asprintf "jalr %s,%s,%a" (reg_name dst) (reg_name src)
             Virtual_address.pp jump_addr
       in
-      (mnemonic, dba)
+      let prefix = string_of_jalModifier jal_md in 
+      (prefix^mnemonic, dba)
 
     let auipc st ~md ~dst ~offset =
       let offset =
