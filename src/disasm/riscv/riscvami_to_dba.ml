@@ -764,7 +764,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         funct7 : Bitvector.t;
       }
 
-      let slice bits =
+      let restrict bits =
         let open Bitset in {
           modifier = restrict ~lo:0 ~hi:1 bits;
           opcode = restrict ~lo:2 ~hi:6 bits;
@@ -776,7 +776,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         }
 
       let apply lift_f st opcode =
-        let s = slice opcode in
+        let s = restrict opcode in
         let dst = s.rd and src1 = s.rs1 and src2 = s.rs2 in
         let mnemonic, dba = lift_f st ~dst ~src1 ~src2 in
         Inst.create ~dba ~mnemonic ~opcode
