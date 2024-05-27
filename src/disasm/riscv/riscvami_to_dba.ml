@@ -849,8 +849,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
       let apply lift_f st opcode =
         let s = restrict opcode in
-        let dst = s.rd and src1 = s.rs1 and src2 = s.rs2 in
-        let mnemonic, dba = lift_f st ~dst ~src1 ~src2 in
+        let md = s.modifier and dst = s.rd and src1 = s.rs1 and src2 = s.rs2 in
+        let mnemonic, dba = lift_f st ~md ~dst ~src1 ~src2 in
         Inst.create ~dba ~mnemonic ~opcode
 
       let sub = apply Lift.sub
@@ -892,10 +892,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
       let lift_aux lifter st opcode =
         let s = restrict opcode in
-        let dst = s.rd in
-        let src = s.rs1 in
-        let imm = s.imm12 in
-        let mnemonic, dba = lifter st ~dst ~src ~imm in
+        let md = s.modifier
+        and dst = s.rd
+        and src = s.rs1
+        and imm = s.imm12 in
+        let mnemonic, dba = lifter st ~md ~dst ~src ~imm in
         Inst.create ~dba ~opcode ~mnemonic
 
       let addi = lift_aux Lift.addi
@@ -921,8 +922,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let jalr = apply_off (Lift.jalr ~instr_size:4)
 
       (* Shift with immediates *)
-      let apply_shift name lift_f st ~shamt ~dst ~src ~opcode =
-        let dba = lift_f st ~dst ~src ~shamt in
+      let apply_shift name lift_f st ~shamt ~md ~dst ~src ~opcode =
+        let dba = lift_f st ~md ~dst ~src ~shamt in
         let mnemonic =
           Printf.sprintf "%s %s,%s,%s" name (reg_name dst) (reg_name src)
             (Z.to_string (Bitvector.value_of shamt))
@@ -949,7 +950,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         let name, lift_f =
           if is_word then ("slliw", Lift.slliw) else ("slli", Lift.slli)
         in
-        apply_shift name lift_f st ~shamt ~dst:s.rd ~src:s.rs1 ~opcode:bits
+        apply_shift name lift_f st ~shamt ~md:s.modifier ~dst:s.rd ~src:s.rs1 ~opcode:bits
 
       (** shift right with immediate, logical or arithmetic *)
       let srxi is_word st opcode =
@@ -962,7 +963,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           | true, true -> ("srliw", Lift.srliw)
           | false, true -> ("sraiw", Lift.sraiw)
         in
-        apply_shift name lift_f st ~shamt ~opcode ~dst:s.rd ~src:s.rs1
+        apply_shift name lift_f st ~shamt ~opcode ~md:s.modifier ~dst:s.rd ~src:s.rs1
     end
 
     module Stype = struct
@@ -1046,8 +1047,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let apply lift_f st opcode =
         let s = restrict opcode in
         (* Is offset a good name here since mnemonics add unsigned immediates ? *)
-        let dst = s.rd and offset = s.imm20 in
-        lift_f st ~dst ~offset
+        let md = s.modifier and dst = s.rd and offset = s.imm20 in
+        lift_f st ~md ~dst ~offset
 
       let lui = apply Lift.lui
       let auipc = apply Lift.auipc
@@ -1083,7 +1084,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
             ]
         in
         let offset = Bv.extend_signed bvoff mode_size |> scale_by 2 in
-        Lift.jal st ~dst:s.rd ~offset
+        Lift.jal st ~md:s.modifier ~dst:s.rd ~offset
     end
 
     (* RV32M/RV64M Standard Extension *)
