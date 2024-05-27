@@ -203,6 +203,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     
     let isAddrAMiDecrease addr = 
       ActAddrSet.mem (Virtual_address.to_bigint addr) !actoffaddrset
+    
+    (* TODO check bitsize *)
+    let mimicCount = De.v ((Dba.Var.create "MimicCount" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
+    let mimicSta = De.v ((Dba.Var.create "MimicSta" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
+    let mimicEnd = De.v ((Dba.Var.create "MimicEnd" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
 
     module Block = struct
       type t = { sealed : bool; insts : inst list }
@@ -225,7 +230,13 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let ( !! ) addr b =
         match isAddrAMiDecrease addr with
           | true ->
-            { insts = List.rev b.insts; sealed = true }
+            let jend = aoff addr in
+            { insts = List.rev (
+              (mimicCount <-- (De.ite (De.equal (mimicEnd) jend)) (De.sub (mimicCount) (De.ones 32)) (mimicCount)) ::
+              (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.zeros 32) (mimicEnd)) ::
+              (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.zeros 32) (mimicSta)) ::
+              b.insts)
+            ; sealed = true }
           | false ->
             { insts = List.rev b.insts; sealed = true }
 
@@ -328,11 +339,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
   module Lift = struct
     open D
-
-    (* TODO check bitsize *)
-    let mimicCount = De.v ((Dba.Var.create "MimicCount" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
-    let mimicSta = De.v ((Dba.Var.create "MimicSta" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
-    let mimicEnd = De.v ((Dba.Var.create "MimicEnd" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
 
     let is_x0 =
       let z = Rar.expr Rar.zero in
