@@ -315,6 +315,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
   module Lift = struct
     open D
 
+    (* TODO check bitsize *)
+    let mimicCount = De.v ((Dba.Var.create "MimicCount" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
+    let mimicSta = De.v ((Dba.Var.create "MimicSta" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
+    let mimicEnd = De.v ((Dba.Var.create "MimicEnd" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
+
     let is_x0 =
       let z = Rar.expr Rar.zero in
       ( = ) z
@@ -331,13 +336,45 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let loadh = De.load (Size.Byte.create 2) Machine.LittleEndian
     let loadb = De.load (Size.Byte.create 1) Machine.LittleEndian
 
-    let load name load_f st ~dst ~src ~offset =
+    let loadModifier_of_md md =
+      match Bv.to_uint md with
+        | 0 -> `Ghost
+        | 1 -> `Mimic
+        | 2 -> `Persistent
+        | 3 -> `Standard
+        | _ -> assert(false) (* AMi modifier bit vector should have size 2 *)
+  
+    let string_of_loadModifier md = 
+      match md with
+        | `Ghost -> "g."
+        | `Mimic -> "m."
+        | `Persistent -> "p."
+        | `Standard -> "s."
+    
+    let loadinst load_f ~md_load ~dst ~src ~offset = 
+      (* TODO check bitsize *)
+      let tmpvar = De.v ((Dba.Var.create "LoadAMi" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty)) in
+      match md_load with
+        | `Ghost ->
+          ini (tmpvar <-- load_f (De.add (reg_bv src) (mk_imm offset)))
+          +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+        | `Mimic ->
+          ini (tmpvar <-- load_f (De.add (reg_bv src) (mk_imm offset)))
+        | `Persistent ->
+          ini (reg_bv dst <-- load_f (De.add (reg_bv src) (mk_imm offset)))
+        | `Standard ->
+          ini (tmpvar <-- load_f (De.add (reg_bv src) (mk_imm offset)))
+          +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+
+    let load name load_f st ~md ~dst ~src ~offset =
+      let md_load = loadModifier_of_md md in
       let dba =
-        ini (reg_bv dst <-- load_f (De.add (reg_bv src) (mk_imm offset)))
+        loadinst load_f ~md_load ~dst ~src ~offset
         |> seal (D_status.next st)
       in
+      let prefix = string_of_loadModifier md_load in
       let mnemonic =
-        Printf.sprintf "%s %s,%s(%s)" name (reg_name dst)
+        Printf.sprintf "%s%s %s,%s(%s)" prefix name (reg_name dst)
           (Z.to_string (Bv.signed_of offset))
           (reg_name src)
       in
@@ -351,7 +388,15 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let lb = load "lb" (fun e -> sext (loadb e))
     let lbu = load "lbu" (fun e -> De.uext mode_size (loadb e))
 
-    let store name store_f restrict st ~offset ~base ~src =
+    let storeModifier_of_md md =
+      match Bv.to_uint md with
+        | 3 -> `Persistent
+        | _ -> assert(false) 
+        (* AMi modifier bit vector should have size 2 *)
+        (* AMi modifier store bit should only be persistent *)
+  
+    let store name store_f restrict st ~md ~offset ~base ~src =
+      let _ = storeModifier_of_md md in
       let dba =
         ini
           (store_f (De.add (reg_bv base) (mk_imm offset))
@@ -360,7 +405,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       in
       let mnemonic =
         (* The order src,offset(dst) is the one adopted by objdump *)
-        Printf.sprintf "%s %s,%s(%s)" name (reg_name src)
+        Printf.sprintf "p.%s %s,%s(%s)" name (reg_name src)
           (Z.to_string (Bv.signed_of offset))
           (reg_name base)
       in
@@ -376,22 +421,60 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let jmp_offset st offset =
       let offset = Z.to_int (Bitvector.signed_of offset) in
       Virtual_address.add_int offset (D_status.addr st)
+    
+    let branchModifier_of_md md =
+      match Bv.to_uint md with
+        | 0 -> `ConstantTime
+        | 3 -> `Persistent
+        | 1 -> `Activating
+        | _ -> assert(false) 
+        (* AMi modifier bit vector should have size 2 *)
+        (* AMi modifier store bit should only be persistent *)
+    let string_of_loadModifier md = 
+      match md with
+        | `Persistent -> "p."
+        | `ConstantTime -> "ct."
+        | `Activating -> "a."
 
-    let branch name cmp st ~src1 ~src2 ~offset =
+    let branchinst cmp st ~md_branch ~src1 ~src2 ~offset =
+      match md_branch with
+        | `Persistent ->
+          let jump_addr = jmp_offset st offset in
+          let jneg = aoff (D_status.next st) in
+          let jpos = aoff jump_addr in
+          !!(ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
+        | `Activating ->
+          let jump_addr = jmp_offset st offset in
+          assert(Virtual_address.to_bigint st.addr < Virtual_address.to_bigint jump_addr);
+          let jneg = aoff st.addr in
+          let jpos = aoff jump_addr in 
+          ini (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal (mimicSta) jneg))) (De.add (mimicCount) (De.ones 32)) (mimicCount))
+          +++ (mimicEnd <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) jpos (mimicEnd))
+          +++ (mimicSta <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) jneg (mimicSta))
+          +++ (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) (De.ones 32) (mimicCount))
+          |> seal (D_status.next st)
+        | `ConstantTime ->
+          let jump_addr = jmp_offset st offset in
+          let jneg = aoff (D_status.next st) in
+          let jpos = aoff jump_addr in
+          !!(ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
+        
+  
+    let branch name cmp st ~md ~src1 ~src2 ~offset =
+      let md_branch = branchModifier_of_md md in
       let jump_addr = jmp_offset st offset in
       let dba =
-        let jneg = aoff (D_status.next st) in
-        let jpos = aoff jump_addr in
-        !!(ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
+        branchinst cmp st ~md_branch ~src1 ~src2 ~offset  
       in
+      let prefix = string_of_loadModifier md_branch in
       let mnemonic =
         (* If the second source register is zero then print special 'z' form of
            operator. *)
         if Bv.is_zeros src2 then
-          Format.asprintf "%sz %s,%a" name (reg_name src1) Virtual_address.pp
+          Format.asprintf "%s%sz %s,%a" prefix name (reg_name src1) Virtual_address.pp
             jump_addr
         else
-          Format.asprintf "%s %s,%s,%a" name (reg_name src1) (reg_name src2)
+          Format.asprintf "%s%s %s,%s,%a" prefix name (reg_name src1) (reg_name src2)
             Virtual_address.pp jump_addr
       in
       (mnemonic, dba)
@@ -403,32 +486,20 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let bge = branch "bge" De.sge
     let bgeu = branch "bgeu" De.uge
 
-    let slti st ~dst ~src ~imm =
+    let slt name f st ~dst ~src ~imm =
       let dba =
         ini
           (reg_bv dst
           <-- De.ite
-                (De.slt (reg_bv src) (mk_imm imm))
+                (f (reg_bv src) (mk_imm imm))
                 (De.ones mode_size) (De.zeros mode_size))
         |> seal (D_status.next st)
       in
-      let mnemonic = op_imm "slti" ~dst ~src ~imm in
+      let mnemonic = op_imm name ~dst ~src ~imm in
       (mnemonic, dba)
-
-    let sltiu st ~dst ~src ~imm =
-      let dba =
-        ini
-          (reg_bv dst
-          <-- De.ite
-                (De.ult (reg_bv src) (mk_imm imm))
-                (* immediate extension is
-                   signed or unsigned ? *)
-                (De.ones mode_size)
-                (De.zeros mode_size))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op_imm "sltiu" ~dst ~src ~imm in
-      (mnemonic, dba)
+    
+    let slti = slt "slti" De.slt
+    let sltiu = slt "sltiu" De.slt
 
     (** add with immediate: dst = src + imm *)
     let addi st ~dst ~src ~imm =
@@ -672,7 +743,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       (mnemonic, dba)
 
     (** instr_size is the size in bytes, so 2 for compressed and 4 for normal *)
-    let jalr st ~instr_size ~dst ~src ~offset =
+    let jalr st ~md ~instr_size ~dst ~src ~offset =
+      ignore(md);
       let jump_addr =
         let _offset = Z.to_int (Bitvector.signed_of offset) in
         Virtual_address.add_int instr_size (D_status.addr st)
@@ -741,7 +813,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let slliw = shift_immediate_word De.shift_left
     let srliw = shift_immediate_word De.shift_right
     let sraiw = shift_immediate_word De.shift_right_signed
-  end
+  end (* FINISH LINE *)
 
   type inst = Unhandled of string | Unknown of string | Inst of Inst.t
 
@@ -836,8 +908,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
       let apply_off lift_f st opcode =
         let s = restrict opcode in
-        let dst = s.rd and src = s.rs1 and offset = s.imm12 in
-        lift_f st ~dst ~src ~offset
+        let md = s.modifier and dst = s.rd and src = s.rs1 and offset = s.imm12 in
+        lift_f st ~md ~dst ~src ~offset
 
       let ld = apply_off Lift.ld
       let lw = apply_off Lift.lw
@@ -930,8 +1002,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
               (* is that what the sentence "in multiple of 2" means p.17 ? *)
             ]
         in
-        let src1 = s.rs1 and src2 = s.rs2 in
-        let mnemonic, dba = lift st ~src1 ~src2 ~offset in
+        let md = s.modifier and src1 = s.rs1 and src2 = s.rs2 in
+        let mnemonic, dba = lift st ~md ~src1 ~src2 ~offset in
         Inst.create ~dba ~mnemonic ~opcode
 
       let beq = branch Lift.beq
@@ -944,8 +1016,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let store store_f st opcode =
         let s = restrict opcode in
         let offset = Bv.append s.imm7 s.imm5 in
-        let base = s.rs1 and src = s.rs2 in
-        store_f st ~offset ~base ~src
+        let md = s.modifier and base = s.rs1 and src = s.rs2 in
+        store_f st ~md ~offset ~base ~src
 
       (** Store instructions (8 bit, 16 bit, 32 bit, 64 bit) *)
       let sb = store Lift.sb
@@ -1194,14 +1266,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       | _ -> unk @@ Format.asprintf "Unknown opcode %a" Bitvector.pp_hex opcode
   end
 
-  let string_of_AMimodifier bv =
-    match Bv.to_uint bv with
-      | 0 -> "g."
-      | 1 -> "m."
-      | 2 -> "p."
-      | 3 -> ""
-      | _ -> assert(false) (* AMi modifier bit vector should have size 2 *)
-
   let lift st bits = 
     let modifiers = Bitset.restrict ~lo:0 ~hi:1 bits in 
     L.debug "Modifiers bits : %s" (Bv.to_bitstring modifiers);
@@ -1209,12 +1273,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     match s with
     | Inst i -> 
       let open Inst in
-      L.debug "Mnemonic : %s" ((string_of_AMimodifier modifiers) ^ i.mnemonic);
-      Inst {
-        mnemonic=(string_of_AMimodifier modifiers) ^ i.mnemonic;
-        opcode=bits;
-        dba=i.dba;
-      }
+      L.debug "Mnemonic : %s" i.mnemonic;
+      s
     | _ -> s
 
   let decode reader vaddr =
@@ -1231,10 +1291,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       L.debug "RISC-V peeked bits %a" Bv.pp_hex bits;
       (4, Lreader.Read.bv32 reader)
     in
-    L.debug "%a: Decoding RISC-V bits %a (%d)" 
-      Bv.pp_hex (Bv.of_int ~size:32 (Lreader.get_pos reader))
-      Bv.pp_hex bits (uint bits);
     let st = D_status.create vaddr in
+    L.debug "%a: Decoding RISC-V bits %a (%d)" 
+      Bv.pp_hex (mk_bv (Virtual_address.to_bigint st.addr))
+      Bv.pp_hex bits (uint bits);
+    
     let s = lift st bits in
     match s with
     | Unhandled mnemonic_hint ->

@@ -1708,8 +1708,10 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       if is_compressed bits then (2, Lreader.Read.bv16 reader)
       else (4, Lreader.Read.bv32 reader)
     in
-    L.debug "Decoding RISC-V bits %a (%d)" Bv.pp_hex bits (uint bits);
     let st = D_status.create vaddr in
+    L.debug "%a: Decoding RISC-V bits %a (%d)"
+      Bv.pp_hex (mk_bv (Virtual_address.to_bigint st.addr))
+      Bv.pp_hex bits (uint bits);
     let s = lift st bits in
     match s with
     | Unhandled mnemonic_hint ->
