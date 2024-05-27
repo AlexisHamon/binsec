@@ -486,17 +486,48 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let bge = branch "bge" De.sge
     let bgeu = branch "bgeu" De.uge
 
-    let slt name f st ~dst ~src ~imm =
-      let dba =
-        ini
-          (reg_bv dst
-          <-- De.ite
-                (f (reg_bv src) (mk_imm imm))
-                (De.ones mode_size) (De.zeros mode_size))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op_imm name ~dst ~src ~imm in
-      (mnemonic, dba)
+    let standardModifier_of_md md =
+      match Bv.to_uint md with
+        | 0 -> `Ghost
+        | 1 -> `Mimic
+        | 2 -> `Persistent
+        | 3 -> `Standard
+        | _ -> assert(false) (* AMi modifier bit vector should have size 2 *)
+  
+    let string_of_standardModifier md = 
+      match md with
+        | `Ghost -> "g."
+        | `Mimic -> "m."
+        | `Persistent -> "p."
+        | `Standard -> "s."
+    
+    let standardinst ~std_md ~dst ~de = 
+      (* TODO check bitsize *)
+      let tmpvar = De.v ((Dba.Var.create "LoadAMi" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty)) in
+      match std_md with
+        | `Ghost ->
+          ini (tmpvar <-- de)
+          +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+        | `Mimic ->
+          ini (tmpvar <-- de)
+        | `Persistent ->
+          ini (reg_bv dst <-- de)
+        | `Standard ->
+          ini (tmpvar <-- de)
+          +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+    
+    let standard mnemonic st ~md ~dst ~de = 
+      let std_md = standardModifier_of_md md in
+      let prefix = string_of_standardModifier std_md in
+      (prefix^mnemonic, standardinst ~std_md ~dst ~de |> seal (D_status.next st))
+
+
+    let slt name f st ~md ~dst ~src ~imm =
+      standard (op_imm name ~dst ~src ~imm) st
+        ~md ~dst
+        ~de:(De.ite
+        (f (reg_bv src) (mk_imm imm))
+        (De.ones mode_size) (De.zeros mode_size))
     
     let slti = slt "slti" De.slt
     let sltiu = slt "sltiu" De.slt
@@ -531,26 +562,20 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
             (ini (dst_e <-- sext (De.add (to_32 src_e) (mk_imm ~size:32 imm))))
         )
 
-    let logicali name logop st ~dst ~src ~imm =
-      let dba =
-        ini (reg_bv dst <-- logop (reg_bv src) (mk_imm imm))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op_imm name ~src ~dst ~imm in
-      (mnemonic, dba)
+    let logicali name logop st ~md ~dst ~src ~imm =
+      standard (op_imm name ~dst ~src ~imm) st
+        ~md ~dst
+        ~de:(logop (reg_bv src) (mk_imm imm))
 
     let andi = logicali "andi" De.logand
     let xori = logicali "xori" De.logxor
     let ori = logicali "ori" De.logor
 
     (** Binary operation with given name and function *)
-    let bop name f st ~dst ~src1 ~src2 =
-      let dba =
-        ini (reg_bv dst <-- f (reg_bv src1) (reg_bv src2))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+    let bop name f st ~md ~dst ~src1 ~src2 =
+      standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(f (reg_bv src1) (reg_bv src2))
 
     let add = bop "add" De.add
     let sub = bop "sub" De.sub
@@ -559,27 +584,19 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let logand = bop "and" De.logand
 
     (** Binary operation on word in 64 bit mode *)
-    let bop_w name f st ~dst ~src1 ~src2 =
+    let bop_w name f st ~md ~dst ~src1 ~src2 =
       assert_mode_is_64 name;
-      let dba =
-        ini (reg_bv dst <-- sext (f (to_32 (reg_bv src1)) (to_32 (reg_bv src2))))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+      standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(sext (f (to_32 (reg_bv src1)) (to_32 (reg_bv src2))))
 
     let addw = bop_w "addw" De.add
     let subw = bop_w "subw" De.sub
 
-    let _mul name restrict ext1 ext2 st ~dst ~src1 ~src2 =
-      let dba =
-        ini
-          (reg_bv dst
-          <-- restrict (De.mul (ext1 (reg_bv src1)) (ext2 (reg_bv src2))))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+    let _mul name restrict ext1 ext2 st ~md ~dst ~src1 ~src2 =
+      standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(restrict (De.mul (ext1 (reg_bv src1)) (ext2 (reg_bv src2))))
 
     let rmul_lo = De.restrict 0 (mode_size - 1)
     let rmul_hi = De.restrict mode_size ((2 * mode_size) - 1)
@@ -594,16 +611,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let mulhu = _mul "mulhu" rmul_hi uextmul uextmul
     let mulhsu = _mul "mulhsu" rmul_hi sextmul uextmul
 
-    let mulw st ~dst ~src1 ~src2 =
+    let mulw st ~md ~dst ~src1 ~src2 =
       assert_mode_is_64 "mulw";
-      let dba =
-        ini
-          (reg_bv dst
-          <-- sext (De.mul (to_32 (reg_bv src1)) (to_32 (reg_bv src2))))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name:"mulw" ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+      standard (op3_str ~name:"mulw" ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(sext (De.mul (to_32 (reg_bv src1)) (to_32 (reg_bv src2))))
 
     let eq_zero e = De.equal e (De.zeros (De.size_of e))
     let minus_one size = De.constant (Bv.of_int ~size (-1))
@@ -680,52 +692,37 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let remuw st ~dst ~src1 ~src2 =
       _divw ~on_div_by_zero:(reg_bv src1) "remuw" De.umod st ~dst ~src1 ~src2
 
-    let slt_f name cmp st ~dst ~src1 ~src2 =
-      let dba =
-        ini
-          (reg_bv dst
-          <-- De.ite
-                (cmp (reg_bv src1) (reg_bv src2))
-                (De.ones mode_size) (De.zeros mode_size))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+    let slt_f name cmp st ~md ~dst ~src1 ~src2 =
+      standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(De.ite
+        (cmp (reg_bv src1) (reg_bv src2))
+        (De.ones mode_size) (De.zeros mode_size))
 
     let slt = slt_f "slt" De.slt
     let sltu = slt_f "ult" De.ult
 
-    let shift_f name shop st ~dst ~src1 ~src2 =
+    let shift_f name shop st ~md ~dst ~src1 ~src2 =
       let shift_size = shift_size false in
-      let dba =
-        ini
-          (reg_bv dst
-          <-- shop (reg_bv src1)
-                (* For some reason DBA allows negative shifts... *)
-                (De.uext mode_size (De.restrict 0 shift_size (reg_bv src2))))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+      standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(shop (reg_bv src1)
+        (* For some reason DBA allows negative shifts... *)
+        (De.uext mode_size (De.restrict 0 shift_size (reg_bv src2))))
 
     let sll = shift_f "sll" De.shift_left
     let srl = shift_f "srl" De.shift_right
     let sra = shift_f "sra" De.shift_right_signed
 
-    let shift_f_w name shop st ~dst ~src1 ~src2 =
+    let shift_f_w name shop st ~md ~dst ~src1 ~src2 =
       assert_mode_is_64 name;
       let shift_size = shift_size true in
-      let dba =
-        ini
-          (reg_bv dst
-          <-- sext
-                (shop
-                   (to_32 (reg_bv src1))
-                   (De.uext 32 (De.restrict 0 shift_size (reg_bv src2)))))
-        |> seal (D_status.next st)
-      in
-      let mnemonic = op3_str ~name ~dst ~src1 ~src2 in
-      (mnemonic, dba)
+      standard (op3_str ~name ~dst ~src1 ~src2) st
+        ~md ~dst
+        ~de:(sext
+        (shop
+           (to_32 (reg_bv src1))
+           (De.uext 32 (De.restrict 0 shift_size (reg_bv src2)))))
 
     let sllw = shift_f_w "sllw" De.shift_left
     let srlw = shift_f_w "srlw" De.shift_right
@@ -768,32 +765,18 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       in
       (mnemonic, dba)
 
-    let auipc st ~dst ~offset =
-      let dba =
-        let offset =
-          Bv.extend_signed (Bv.append offset (Bv.zeros 12)) mode_size
-        in
-        ini (reg_bv dst <-- aoff (D_status.addr st) ~offset)
-        |> seal (D_status.next st)
-      in
-      let mnemonic =
-        Printf.sprintf "auipc %s,%s" (reg_name dst) (Bv.to_hexstring offset)
-      in
-      (mnemonic, dba)
+    let auipc st ~md ~dst ~offset =
+      let offset =
+        Bv.extend_signed (Bv.append offset (Bv.zeros 12)) mode_size
+      in standard (Printf.sprintf "auipc %s,%s" (reg_name dst) (Bv.to_hexstring offset)) st
+        ~md ~dst
+        ~de:(aoff (D_status.addr st) ~offset:offset)
 
-    let lui st ~dst ~offset =
-      let dba =
-        ini
-          (reg_bv dst
-          <-- De.sext mode_size
-                (mk_imm ~size:32 (Bv.append offset (Bv.zeros 12))))
-        |> seal (D_status.next st)
-      in
-      let mnemonic =
-        Printf.sprintf "lui %s,%s" (reg_name dst)
-          (Bitvector.to_hexstring offset)
-      in
-      (mnemonic, dba)
+    let lui st ~dst ~md ~offset =
+      standard (Printf.sprintf "lui %s,%s" (reg_name dst) (Bitvector.to_hexstring offset)) st
+        ~md ~dst
+        ~de:(De.sext mode_size
+        (mk_imm ~size:32 (Bv.append offset (Bv.zeros 12))))
 
     let shift_immediate shop st ~dst ~src ~shamt =
       ini (reg_bv dst <-- shop (reg_bv src) (mk_cst Bv.extend shamt))
