@@ -1240,7 +1240,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       | 0x67 ->
           let mnemonic, dba = I.Itype.jalr st opcode in
           ins @@ Inst.create ~mnemonic ~dba ~opcode
-      | _ -> unk @@ Format.asprintf "Unknown opcode %a" Bitvector.pp_hex opcode
+      | 0x0b -> (* mark debug instruction *)
+          let mnemonic, dba = ("nop", D.Block.empty |> D.Block.seal (D_status.next st)) in
+          ins @@ Inst.create ~mnemonic ~dba ~opcode
+      | _ ->
+        unk @@ Format.asprintf "Unknown opcode %a" Bitvector.pp_hex opcode
   end
 
   let lift st bits = 
