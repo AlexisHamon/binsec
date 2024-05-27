@@ -755,12 +755,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     (* Basic instruction type for RISC-V are described page 23 of manual *)
     module Rtype = struct
       type t = {
-        funct7 : Bitvector.t;
-        rs2 : Bitvector.t;
-        rs1 : Bitvector.t;
-        funct3 : Bitvector.t;
-        rd : Bitvector.t;
         opcode : Bitvector.t;
+        rd : Bitvector.t;
+        funct3 : Bitvector.t;
+        rs1 : Bitvector.t;
+        rs2 : Bitvector.t;
+        funct7 : Bitvector.t;
       }
 
       let slice bits =
@@ -950,7 +950,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     end
 
     module Utype = struct
-      type t = { opcode : Bv.t; rd : Bv.t; imm20 : Bv.t }
+      type t = {
+        opcode : Bv.t;
+        rd : Bv.t;
+        imm20 : Bv.t
+      }
 
       let restrict bits =
         let open Bitset in
@@ -970,7 +974,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     end
 
     module Jtype = struct
-      type t = { opcode : Bv.t; rd : Bv.t; imm20 : Bv.t }
+      type t = { 
+        opcode : Bv.t;
+        rd : Bv.t;
+        imm20 : Bv.t 
+      }
 
       let restrict bits =
         let open Bitset in
