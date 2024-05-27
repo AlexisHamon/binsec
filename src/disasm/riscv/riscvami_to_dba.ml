@@ -64,7 +64,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let bysz t = Isz.bytes t.isz
     let create ?(isz = Isz.I32) va = { addr = va; isz }
     let switch isz t = { t with isz }
-    let switch16 = switch Isz.I16
+    let _switch16 = switch Isz.I16
     let switch32 = switch Isz.I32
     let next t = Virtual_address.add_int (bysz t) (addr t)
   end
@@ -149,6 +149,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     let rec to_dba_instr instr ?id lbl_id =
       match instr with
+
       | Asg (src, dst) ->
           assert (Dba.LValue.is_expr_translatable src);
           let lval = Dba.LValue.of_expr src in
@@ -286,22 +287,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let restrict ~lo ~hi bits =
       let open Interval in
       Bv.extract bits { lo; hi }
-
-    let eight = Bitvector.of_int ~size:mode_size 8
-
-    (* RVC registers are actually offsets from x8. See p.71 of User-Level ISA
-       V2.2 *)
-    let reg3 ~lo ~hi bits =
-      assert (hi - lo + 1 = 3);
-      let bvreg = restrict ~lo ~hi bits in
-      let bv32 = Bv.extend bvreg mode_size in
-      Bv.add bv32 eight
   end
 
   (** Bitvector utils *)
   let cut bv n = Bv.extract bv { lo = n; hi = n }
 
-  let signed_int bv = Bv.signed_of bv |> Z.to_int
   let reg_num bv = Rar.of_int_exn @@ Z.to_int @@ Bitvector.value_of bv
   let reg_bv bv = Rar.expr (reg_num bv)
   let reg_name bv = Rar.name (reg_num bv)
@@ -329,11 +319,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let z = Rar.expr Rar.zero in
       ( = ) z
 
-    let is_ra bv = Z.to_int (Bv.value_of bv) = Rar.num Rar.ra
-
     open Block
-
-    let nop st = Block.empty |> seal (D_status.next st)
 
     let loadd t =
       assert_mode_is_64 "loadd";
@@ -674,12 +660,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let srlw = shift_f_w "srlw" De.shift_right
     let sraw = shift_f_w "sraw" De.shift_right_signed
 
-    let mov st ~dst ~src =
-      if Bv.equal dst src then ("nop", seal (D_status.next st) empty)
-      else
-        ( Printf.sprintf "mv %s,%s" (reg_name dst) (reg_name src),
-          ini (reg_bv dst <-- reg_bv src) |> seal (D_status.next st) )
-
     let jal st ~dst ~offset =
       let jmp_addr =
         let offset = Z.to_int (Bitvector.signed_of offset) in
@@ -713,15 +693,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         else
           Format.asprintf "jalr %s,%s,%a" (reg_name dst) (reg_name src)
             Virtual_address.pp jump_addr
-      in
-      (mnemonic, dba)
-
-    let jr st r =
-      let _, dba =
-        jalr st ~instr_size:4 ~dst:Bitvector.zero ~src:r ~offset:Bitvector.zero
-      in
-      let mnemonic =
-        if is_ra r then "ret" else Printf.sprintf "jr %s" (reg_name r)
       in
       (mnemonic, dba)
 
@@ -770,258 +741,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let slliw = shift_immediate_word De.shift_left
     let srliw = shift_immediate_word De.shift_right
     let sraiw = shift_immediate_word De.shift_right_signed
-
-    module C = struct
-      let slli st ~dst ~shamt = slli st ~dst ~src:dst ~shamt
-      let srli st ~dst ~shamt = srli st ~dst ~src:dst ~shamt
-      let srai st ~dst ~shamt = srai st ~dst ~src:dst ~shamt
-
-      let jstitch11 offset =
-        let open Basic_types in
-        let bvimm =
-          Bv.concat
-            [
-              cut offset 10;
-              (* bit 11 *)
-              cut offset 6;
-              (* bit 10 *)
-              Bv.extract offset { lo = 7; hi = 8 };
-              cut offset 4;
-              (* bit 7 *)
-              cut offset 5;
-              (* bit 6 *)
-              cut offset 0;
-              (* bit 5 *)
-              cut offset 9;
-              Bv.extract offset { lo = 1; hi = 3 };
-            ]
-        in
-        L.debug "C.j offset %a (%d)" Bv.pp bvimm (signed_int bvimm);
-        Bv.extend_signed bvimm mode_size
-
-      let real_offset offset = jstitch11 offset |> scale_by 2
-
-      let jmp rdst st ~offset =
-        let dst = Rar.(bvnum rdst) in
-        jal st ~dst ~offset:(real_offset offset)
-
-      let j st ~offset =
-        let _, dba = jmp Rar.zero st ~offset in
-        let jmp_addr = jmp_offset st (real_offset offset) in
-        (Format.asprintf "j %a" Virtual_address.pp jmp_addr, dba)
-
-      let jal = jmp (Rar.of_int_exn 1)
-
-      let jalr st ~src =
-        let dst = Rar.(bvnum ra) (* always ra *) in
-        let offset = Bv.zero in
-        let _, dba = jalr st ~instr_size:2 ~dst ~src ~offset in
-        (Printf.sprintf "jalr %s" (reg_name src), dba)
-
-      let swsp st ~src ~imm6 =
-        let bvoff =
-          (* imm6 is offset[5:2|7:6] *)
-          Bv.concat
-            [
-              Bv.extract imm6 { lo = 0; hi = 1 };
-              Bv.extract imm6 { lo = 2; hi = 5 };
-            ]
-        in
-        let offset = scale_by 4 (Bv.extend bvoff mode_size) in
-        sw st ~src ~base:Rar.(bvnum sp) ~offset
-
-      let sdsp st ~src ~imm6 =
-        assert_mode_is_64 "C.sdsp";
-        let bvoff =
-          (* imm6 is offset[5:3|8:6] *)
-          Bv.concat
-            [
-              Bv.extract imm6 { lo = 0; hi = 2 };
-              Bv.extract imm6 { lo = 3; hi = 4 };
-            ]
-        in
-        let offset = scale_by 8 (Bv.extend bvoff mode_size) in
-        sd st ~src ~base:Rar.(bvnum sp) ~offset
-
-      let sw st bits =
-        let base = Bitset.reg3 ~lo:7 ~hi:9 bits in
-        let src = Bitset.reg3 ~lo:2 ~hi:4 bits in
-        let imm3 = Bitset.restrict ~lo:10 ~hi:12 bits in
-        (* offset[5:3]*)
-        let imm2 = Bitset.restrict ~lo:5 ~hi:6 bits in
-        (* offset[2|6] *)
-        let bvoff = Bv.concat [ cut imm2 0; imm3; cut imm2 1 ] in
-        let offset = scale_by 4 (Bv.extend bvoff mode_size) in
-        sw st ~base ~src ~offset
-
-      let sd st bits =
-        assert_mode_is_64 "C.sd";
-        let base = Bitset.reg3 ~lo:7 ~hi:9 bits in
-        let src = Bitset.reg3 ~lo:2 ~hi:4 bits in
-        let imm3 = Bitset.restrict ~lo:10 ~hi:12 bits in
-        (* offset[5:3]*)
-        let imm2 = Bitset.restrict ~lo:5 ~hi:6 bits in
-        (* offset[7:6]*)
-        let bvoff = Bv.concat [ imm2; imm3 ] in
-        let offset = scale_by 8 (Bv.extend bvoff mode_size) in
-        sd st ~base ~src ~offset
-
-      let lwsp st ~dst ~off1 ~off5 =
-        (* offset is split in two fields:
-            - off1 is offset[5]
-            - off2 is offset[4:2|7:6]
-        *)
-        let bvoff =
-          Bv.concat
-            [
-              Bv.extract off5 { lo = 0; hi = 1 };
-              off1;
-              Bv.extract off5 { lo = 2; hi = 4 };
-            ]
-        in
-        let offset = scale_by 4 (Bv.extend bvoff mode_size) in
-        lw st ~dst ~offset ~src:Rar.(bvnum sp)
-
-      let ldsp st ~dst ~off1 ~off5 =
-        assert_mode_is_64 "C.ldsp";
-        (* offset is split in two fields:
-            - off1 is offset[5]
-            - off2 is offset[4:3|8:6]
-        *)
-        let bvoff =
-          Bv.concat
-            [
-              Bv.extract off5 { lo = 0; hi = 2 };
-              off1;
-              Bv.extract off5 { lo = 3; hi = 4 };
-            ]
-        in
-        let offset = scale_by 8 (Bv.extend bvoff mode_size) in
-        ld st ~dst ~offset ~src:Rar.(bvnum sp)
-
-      let lw st bits =
-        let dst = Bitset.reg3 ~lo:2 ~hi:4 bits in
-        let base = Bitset.reg3 ~lo:7 ~hi:9 bits in
-        let imm2 = Bitset.restrict ~lo:5 ~hi:6 bits in
-        (* offset[2|6] *)
-        let imm3 = Bitset.restrict ~lo:10 ~hi:12 bits in
-        (* offset[5:3] *)
-        let bvoff = Bv.concat [ cut imm2 0; imm3; cut imm2 1 ] in
-        let offset = scale_by 4 (Bv.extend_signed bvoff mode_size) in
-        lw st ~dst ~offset ~src:base
-
-      let ld st bits =
-        assert_mode_is_64 "C.ld";
-        let dst = Bitset.reg3 ~lo:2 ~hi:4 bits in
-        let base = Bitset.reg3 ~lo:7 ~hi:9 bits in
-        let imm2 = Bitset.restrict ~lo:5 ~hi:6 bits in
-        (* offset[7:6] *)
-        let imm3 = Bitset.restrict ~lo:10 ~hi:12 bits in
-        (* offset[5:3] *)
-        let bvoff = Bv.concat [ imm2; imm3 ] in
-        let offset = scale_by 8 (Bv.extend_signed bvoff mode_size) in
-        ld st ~dst ~offset ~src:base
-
-      let li st ~dst ~imm5 ~imm1 =
-        let src = Bitvector.zero (* x0 *) in
-        let imm = Bv.concat [ imm1; imm5 ] in
-        let _, dba = addi st ~src ~dst ~imm in
-        ( Printf.sprintf "li %s,%s" (reg_name dst)
-            (Z.to_string (Bv.signed_of imm)),
-          dba )
-
-      let addi16sp st ~imm5 ~imm1 =
-        L.debug "addi16sp";
-        let bv5 = imm5 and bv1 = imm1 in
-        let nzimm =
-          Bitvector.concat
-            [
-              bv1;
-              Bitvector.extract bv5 { lo = 1; hi = 2 };
-              cut bv5 3;
-              cut bv5 0;
-              cut bv5 4;
-            ]
-        in
-        assert (not @@ Bitvector.is_zeros nzimm);
-        let imm = scale_by 16 (Bv.extend_signed nzimm mode_size) in
-        let dst = Rar.(bvnum sp) in
-        addi st ~src:dst ~dst ~imm
-
-      let addi4spn st bits =
-        L.debug "addi4spn";
-        let bv8 = Bitset.restrict ~lo:5 ~hi:12 bits in
-        (* bv8 is nzuimm[5:4|9:6|2|3] *)
-        let bvoff =
-          Bv.concat
-            [
-              Bv.extract bv8 { lo = 2; hi = 5 };
-              Bv.extract bv8 { lo = 6; hi = 7 };
-              cut bv8 0;
-              cut bv8 1;
-              Bv.zeros 2;
-            ]
-        in
-        let imm = Bv.extend bvoff 12 in
-        let dst = Bitset.reg3 ~lo:2 ~hi:4 bits in
-        L.debug "rd is x%d" (Bv.to_int dst);
-        addi st ~dst ~imm ~src:Rar.(bvnum sp)
-
-      let addi st ~dst ~imm5 ~imm1 =
-        let imm = Bv.append imm1 imm5 in
-        addi st ~src:dst ~dst ~imm
-
-      let addiw st ~dst ~imm5 ~imm1 =
-        let imm = Bv.append imm1 imm5 in
-        addiw st ~src:dst ~dst ~imm
-
-      let andi st opcode =
-        let imm1 = cut opcode 12 in
-        (* imm[5] *)
-        let imm5 = Bv.extract opcode { lo = 2; hi = 6 } in
-        let dst = Bitset.reg3 ~lo:7 ~hi:9 opcode in
-        let imm = Bv.append imm1 imm5 in
-        andi st ~dst ~src:dst ~imm
-
-      let lift_to_uncompressed bop st ~dst ~src =
-        bop st ~dst ~src1:dst ~src2:src
-
-      let add = lift_to_uncompressed add
-      let sub = lift_to_uncompressed sub
-      let addw = lift_to_uncompressed addw
-      let subw = lift_to_uncompressed subw
-      let logor = lift_to_uncompressed logor
-      let logxor = lift_to_uncompressed logxor
-      let logand = lift_to_uncompressed logand
-
-      let lui st ~dst ~imm5 ~imm1 =
-        assert (
-          let v = Bitvector.value_of dst |> Z.to_int in
-          v <> 0 && v <> 2);
-        let offset = Bitvector.append imm1 imm5 in
-        lui st ~dst ~offset
-
-      let bz name branch_f st ~src ~imm3 ~imm5 =
-        let bvoff =
-          let open Basic_types in
-          Bv.concat
-            [
-              cut imm3 2;
-              Bv.extract imm5 { lo = 3; hi = 4 };
-              cut imm5 0;
-              Bv.extract imm3 { lo = 0; hi = 1 };
-              Bv.extract imm5 { lo = 1; hi = 2 };
-            ]
-        in
-        let offset = scale_by 2 bvoff in
-        let _, dba = branch_f st ~src1:src ~src2:Rar.(bvnum zero) ~offset in
-        ( Format.asprintf "%s %s,%a" name (reg_name src) Virtual_address.pp
-            (jmp_offset st offset),
-          dba )
-
-      let beqz = bz "beqz" beq
-      let bnez = bz "bnez" bne
-    end
   end
 
   type inst = Unhandled of string | Unknown of string | Inst of Inst.t
@@ -1293,213 +1012,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let remw = Rtype.apply Lift.remw
       let remuw = Rtype.apply Lift.remuw
     end
-
-    (* Compressed instruction format *)
-    module C = struct
-      let shift name shift_f st opcode =
-        let dst = Bitset.reg3 ~lo:7 ~hi:9 opcode in
-        let shamt5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-        let shamt1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-        if Riscv_arch.Mode.is_m32 mode then assert (Bv.is_zero shamt1);
-        let shamt = Bv.append shamt1 shamt5 in
-        assert (not (Bv.is_zeros shamt));
-        let dba = shift_f st ~dst ~shamt in
-        let mnemonic =
-          Printf.sprintf "%s %s,%s,%s" name (reg_name dst) (reg_name dst)
-            (Z.to_string (Bv.value_of shamt))
-        in
-        Inst.create ~dba ~mnemonic ~opcode
-
-      let srli = shift "srli" Lift.C.srli
-      let srai = shift "srai" Lift.C.srai
-      let slli = shift "slli" Lift.C.slli
-
-      let c0 st opcode =
-        let funct3 = uint @@ Bitset.restrict ~lo:13 ~hi:15 opcode in
-        match funct3 with
-        | 0 ->
-            let rd = Bitset.reg3 ~lo:2 ~hi:4 opcode in
-            let nzuimm = Bitset.restrict ~lo:5 ~hi:12 opcode in
-            if Bv.is_zeros rd && Bv.is_zeros nzuimm then
-              unh "Illegal instruction"
-            else
-              let mnemonic, dba = Lift.C.addi4spn st opcode in
-              ins @@ Inst.create ~mnemonic ~dba ~opcode
-        | 1 -> unh "C.fld"
-        | 2 ->
-            let mnemonic, dba = Lift.C.lw st opcode in
-            ins @@ Inst.create ~mnemonic ~dba ~opcode
-        | 3 ->
-            if Riscv_arch.Mode.is_m32 mode then unh "C.flw"
-            else
-              let mnemonic, dba = Lift.C.ld st opcode in
-              ins @@ Inst.create ~mnemonic ~dba ~opcode
-        | 4 -> unh "C.reserved"
-        | 5 -> if Riscv_arch.Mode.is_m128 mode then unh "C.sq" else unh "C.fsd"
-        | 6 ->
-            let mnemonic, dba = Lift.C.sw st opcode in
-            ins @@ Inst.create ~opcode ~mnemonic ~dba
-        | 7 ->
-            if Riscv_arch.Mode.is_m32 mode then unh "C.fsw"
-            else
-              let mnemonic, dba = Lift.C.sd st opcode in
-              ins @@ Inst.create ~opcode ~mnemonic ~dba
-        | _ -> assert false
-      (* no 3 opcode value should reach here *)
-
-      let c1_arith st opcode =
-        (* opcode is 1 and funct3 is 4 *)
-        let funct2 = uint @@ Bitset.restrict ~lo:10 ~hi:11 opcode in
-        match funct2 with
-        | 0 -> ins @@ srli st opcode
-        | 1 -> ins @@ srai st opcode
-        | 2 ->
-            let mnemonic, dba = Lift.C.andi st opcode in
-            ins @@ Inst.create ~opcode ~dba ~mnemonic
-        | 3 -> (
-            let funct1 = uint @@ Bitset.restrict ~lo:12 ~hi:12 opcode in
-            let funct2 = uint @@ Bitset.restrict ~lo:5 ~hi:6 opcode in
-            let dst = Bitset.reg3 ~lo:7 ~hi:9 opcode in
-            let src = Bitset.reg3 ~lo:2 ~hi:4 opcode in
-            if funct1 = 0 then
-              let mnemonic, dba =
-                match funct2 with
-                | 0 -> Lift.C.sub st ~dst ~src
-                | 1 -> Lift.C.logxor st ~dst ~src
-                | 2 -> Lift.C.logor st ~dst ~src
-                | 3 -> Lift.C.logand st ~dst ~src
-                | _ -> assert false
-              in
-              ins @@ Inst.create ~opcode ~dba ~mnemonic
-            else
-              match funct2 with
-              | 0 ->
-                  let mnemonic, dba = Lift.C.subw st ~dst ~src in
-                  ins @@ Inst.create ~opcode ~dba ~mnemonic
-              | 1 ->
-                  let mnemonic, dba = Lift.C.addw st ~dst ~src in
-                  ins @@ Inst.create ~opcode ~dba ~mnemonic
-              | 2 -> unh "reserved"
-              | 3 -> unh "reserved"
-              | _ -> assert false)
-        | _ -> assert false
-
-      let bz bz_lift opcode =
-        let imm5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-        let imm3 = Bitset.restrict ~lo:10 ~hi:12 opcode in
-        let src = Bitset.reg3 ~lo:7 ~hi:9 opcode in
-        let mnemonic, dba = bz_lift ~src ~imm3 ~imm5 in
-        ins @@ Inst.create ~mnemonic ~dba ~opcode
-
-      let c1 st opcode =
-        let funct3 = uint @@ Bitset.restrict ~lo:13 ~hi:15 opcode in
-        match funct3 with
-        | 0 ->
-            let r = Bitset.restrict ~lo:7 ~hi:11 opcode in
-            let nzuimm5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-            let nzuimm1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-            if Bv.is_zeros r && Bv.is_zeros nzuimm1 && Bv.is_zeros nzuimm5 then
-              ins @@ Inst.create ~dba:(Lift.nop st) ~mnemonic:"nop" ~opcode
-            else
-              let mnemonic, dba =
-                Lift.C.addi st ~dst:r ~imm5:nzuimm5 ~imm1:nzuimm1
-              in
-              ins @@ Inst.create ~dba ~mnemonic ~opcode
-        | 1 ->
-            if Riscv_arch.Mode.is_m32 mode then
-              let offset = Bitset.restrict ~lo:2 ~hi:12 opcode in
-              let mnemonic, dba = Lift.C.jal st ~offset in
-              ins @@ Inst.create ~mnemonic ~dba ~opcode
-            else
-              let dst = Bitset.restrict ~lo:7 ~hi:11 opcode in
-              let imm5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-              let imm1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-              let mnemonic, dba = Lift.C.addiw st ~dst ~imm5 ~imm1 in
-              ins @@ Inst.create ~mnemonic ~dba ~opcode
-        | 2 ->
-            let rd = Bitset.restrict ~lo:7 ~hi:11 opcode in
-            let imm5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-            let imm1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-            let mnemonic, dba = Lift.C.li st ~dst:rd ~imm5 ~imm1 in
-            ins @@ Inst.create ~dba ~mnemonic ~opcode
-        | 3 ->
-            let rd = Bitset.restrict ~lo:7 ~hi:11 opcode in
-            let imm5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-            let imm1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-            assert (not @@ Bv.is_zeros rd);
-            let mnemonic, dba =
-              if uint rd = 2 then Lift.C.addi16sp st ~imm1 ~imm5
-              else Lift.C.lui st ~dst:rd ~imm1 ~imm5
-            in
-            ins @@ Inst.create ~dba ~mnemonic ~opcode
-        | 4 -> c1_arith st opcode
-        | 5 ->
-            let offset = Bitset.restrict ~lo:2 ~hi:12 opcode in
-            let mnemonic, dba = Lift.C.j st ~offset in
-            ins @@ Inst.create ~mnemonic ~dba ~opcode
-        | 6 -> bz (Lift.C.beqz st) opcode
-        | 7 -> bz (Lift.C.bnez st) opcode
-        | _ -> assert false
-      (* no 3 opcode value should reach here *)
-
-      let c2 st opcode =
-        let _opcode = 0x2 in
-        let funct3 = Bitset.restrict ~lo:13 ~hi:15 opcode in
-        match uint funct3 with
-        | 0 -> ins @@ slli st opcode
-        | 1 -> unh "C.fldsp"
-        | 2 ->
-            let dst = Bitset.restrict ~lo:7 ~hi:11 opcode in
-            let off5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-            let off1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-            let mnemonic, dba = Lift.C.lwsp st ~dst ~off1 ~off5 in
-            ins @@ Inst.create ~opcode ~mnemonic ~dba
-        | 3 ->
-            if Riscv_arch.Mode.is_m32 mode then unh "C.flwsp"
-            else
-              let dst = Bitset.restrict ~lo:7 ~hi:11 opcode in
-              let off5 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-              let off1 = Bitset.restrict ~lo:12 ~hi:12 opcode in
-              let mnemonic, dba = Lift.C.ldsp st ~dst ~off1 ~off5 in
-              ins @@ Inst.create ~opcode ~mnemonic ~dba
-        | 4 -> (
-            let funct4 = Bitset.restrict ~lo:12 ~hi:15 opcode in
-            match uint funct4 with
-            | 0x8 ->
-                let rs2 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-                let rx = Bitset.restrict ~lo:7 ~hi:11 opcode in
-                let mnemonic, dba =
-                  if Bv.is_zeros rs2 then Lift.jr st rx
-                  else Lift.mov st ~dst:rx ~src:rs2
-                in
-                ins @@ Inst.create ~opcode ~mnemonic ~dba
-            | 0x9 ->
-                let r1 = Bitset.restrict ~lo:7 ~hi:11 opcode in
-                let r2 = Bitset.restrict ~lo:2 ~hi:6 opcode in
-                if Bv.is_zeros r2 then
-                  if Bv.is_zeros r1 then unh "C.ebreak"
-                  else
-                    let mnemonic, dba = Lift.C.jalr st ~src:r1 in
-                    ins @@ Inst.create ~opcode ~mnemonic ~dba
-                else
-                  let mnemonic, dba = Lift.C.add st ~src:r2 ~dst:r1 in
-                  ins @@ Inst.create ~opcode ~mnemonic ~dba
-            | _ -> assert false)
-        | 5 -> unh "C.fsdsp/C.sqps"
-        | 6 ->
-            let imm6 = Bitset.restrict ~lo:7 ~hi:12 opcode in
-            let src = Bitset.restrict ~lo:2 ~hi:6 opcode in
-            let mnemonic, dba = Lift.C.swsp st ~imm6 ~src in
-            ins @@ Inst.create ~opcode ~mnemonic ~dba
-        | 7 ->
-            if Riscv_arch.Mode.is_m32 mode then unh "C.fswsp"
-            else
-              let imm6 = Bitset.restrict ~lo:7 ~hi:12 opcode in
-              let src = Bitset.restrict ~lo:2 ~hi:6 opcode in
-              let mnemonic, dba = Lift.C.sdsp st ~imm6 ~src in
-              ins @@ Inst.create ~opcode ~mnemonic ~dba
-        | _ -> assert false
-    end
   end
 
   let is_compressed bits =
@@ -1670,25 +1182,10 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       | _ -> unk @@ Format.asprintf "Unknown opcode %a" Bitvector.pp_hex opcode
   end
 
-  module Compressed = struct
-    let lift st bits =
-      let quadrant = uint @@ Bitset.restrict bits ~lo:0 ~hi:1 in
-      L.debug "Compressed instruction, quadrant %d" quadrant;
-      match quadrant with
-      | 0 -> I.C.c0 st bits
-      | 1 -> I.C.c1 st bits
-      | 2 -> I.C.c2 st bits
-      | 3 -> fail "Reserved for uncompressed opcode"
-      | n ->
-          let msg = Printf.sprintf "Unexpected quadrant value %d" n in
-          fail msg
-  end
-
   let lift st bits = 
-    if is_compressed bits then Compressed.lift (D_status.switch16 st) bits
-    else Uncompressed.lift (D_status.switch32 st) bits
+    Uncompressed.lift (D_status.switch32 st) bits
 
-  let decode reader vaddr =
+  let _decode reader vaddr =
     let size, bits =
       (* TODO: will break if I am wrong -- cursor is always well positioned *)
 
@@ -1734,20 +1231,77 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         (ginst, dhunk)
 end
 
-(* For a simplistic interface, only expose the decode function *)
-
 module Reg32 : Riscv_arch.RegisterSize = struct
   let size = Riscv_arch.Mode.m32
 end
 
-module Riscv32_to_Dba = Riscv_to_Dba (Reg32)
+(** Instruction set decoder *)
+module Riscv32AMi_to_Dba = struct
+include Riscv_to_Dba (Reg32)
 
-let decode_32 = Riscv32_to_Dba.decode
+let string_of_AMimodifier bv =
+  match Bv.to_uint bv with
+    | 0 -> "g."
+    | 1 -> "m."
+    | 2 -> "p."
+    | 3 -> ""
+    | _ -> assert(false) (* AMi modifier bit vector should have size 2 *)
+  
+let lift st bits = 
+  let modifiers = Bitset.restrict ~lo:0 ~hi:1 bits in 
+  L.debug "Modifiers bits : %s" (Bv.to_bitstring modifiers);
+  let s = Uncompressed.lift (D_status.switch32 st) (bits) in
+  match s with
+  | Inst i -> 
+    let open Inst in
+    L.debug "Mnemonic : %s" ((string_of_AMimodifier modifiers) ^ i.mnemonic);
+    Inst {
+      mnemonic=(string_of_AMimodifier modifiers) ^ i.mnemonic;
+      opcode=bits;
+      dba=i.dba;
+    }
+  | _ -> s
 
-module Reg64 : Riscv_arch.RegisterSize = struct
-  let size = Riscv_arch.Mode.m64
+let decode reader vaddr =
+  let size, bits =
+    (* TODO: will break if I am wrong -- cursor is always well positioned *)
+
+    (* First we position the cursor at the right address.
+        Then we peek a 16 bits value to check out if the opcode is compressed or
+        not.
+        If so, just read 16 bits and decode the compressed opcode.
+        Otherwise, the opcode is 32 bits long. Decode an uncompressed opcode.
+    *)
+    let bits = Lreader.Peek.bv16 reader in
+    L.debug "RISC-V peeked bits %a" Bv.pp_hex bits;
+    (4, Lreader.Read.bv32 reader)
+  in
+  L.debug "%a: Decoding RISC-V bits %a (%d)" 
+    Bv.pp_hex (Bv.of_int ~size:32 (Lreader.get_pos reader))
+    Bv.pp_hex bits (uint bits);
+  let st = D_status.create vaddr in
+  let s = lift st bits in
+  match s with
+  | Unhandled mnemonic_hint ->
+      let opcode = Bitvector.to_hexstring bits in
+      let mnemonic = Mnemonic.unsupported ~mnemonic_hint () in
+      let ginst = Instruction.Generic.create size opcode mnemonic in
+      L.debug "Unhandled %s" mnemonic_hint;
+      (ginst, Dhunk.empty)
+  | Unknown _ ->
+      let opcode = Bitvector.to_hexstring bits in
+      let mnemonic = Mnemonic.unknown in
+      let ginst = Instruction.Generic.create size opcode mnemonic in
+      L.debug "Unknown %s" opcode;
+      (ginst, Dhunk.empty)
+  | Inst i ->
+      let open Inst in
+      let opcode = Bitvector.to_hexstring i.opcode in
+      let mnemonic = Mnemonic.supported i.mnemonic Format.pp_print_string in
+      let ginst = Instruction.Generic.create size opcode mnemonic in
+      let dhunk = D.Block.to_dba i.dba in
+      L.debug "@[<hov>Dba:@ %a@]@]" Dhunk.pp dhunk;
+      (ginst, dhunk)
 end
 
-module Riscv64_to_Dba = Riscv_to_Dba (Reg64)
-
-let decode_64 = Riscv64_to_Dba.decode
+let decode_32_ami = Riscv32AMi_to_Dba.decode

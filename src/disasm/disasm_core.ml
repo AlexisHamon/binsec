@@ -77,7 +77,7 @@ let riscv32_decode reader vaddr =
   generic_decode reader Riscv_to_dba.decode_32 (fun x -> x) vaddr
 
 let riscv32ami_decode reader vaddr =
-  generic_decode reader Riscv_to_dba.decode_32_ami (fun x -> x) vaddr
+  generic_decode reader Riscvami_to_dba.decode_32_ami (fun x -> x) vaddr
 
 let riscv64_decode reader vaddr =
   generic_decode reader Riscv_to_dba.decode_64 (fun x -> x) vaddr
