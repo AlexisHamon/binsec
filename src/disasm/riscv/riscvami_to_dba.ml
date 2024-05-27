@@ -755,6 +755,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     (* Basic instruction type for RISC-V are described page 23 of manual *)
     module Rtype = struct
       type t = {
+        modifier : Bitvector.t;
         opcode : Bitvector.t;
         rd : Bitvector.t;
         funct3 : Bitvector.t;
@@ -764,14 +765,15 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       }
 
       let slice bits =
-        let open Bitset in
-        let opcode = restrict ~lo:0 ~hi:6 bits
-        and rd = restrict ~lo:7 ~hi:11 bits
-        and funct3 = restrict ~lo:12 ~hi:14 bits
-        and rs1 = restrict ~lo:15 ~hi:19 bits
-        and rs2 = restrict ~lo:20 ~hi:24 bits
-        and funct7 = restrict ~lo:25 ~hi:31 bits in
-        { funct7; rd; funct3; opcode; rs1; rs2 }
+        let open Bitset in {
+          modifier = restrict ~lo:0 ~hi:1 bits;
+          opcode = restrict ~lo:2 ~hi:6 bits;
+          rd = restrict ~lo:7 ~hi:11 bits;
+          funct3 = restrict ~lo:12 ~hi:14 bits;
+          rs1 = restrict ~lo:15 ~hi:19 bits;
+          rs2 = restrict ~lo:20 ~hi:24 bits;
+          funct7 = restrict ~lo:25 ~hi:31 bits;
+        }
 
       let apply lift_f st opcode =
         let s = slice opcode in
@@ -798,6 +800,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     module Itype = struct
       type t = {
+        modifier : Bitvector.t;
         opcode : Bv.t;
         rd : Bv.t;
         funct3 : Bv.t;
@@ -806,13 +809,14 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       }
 
       let restrict bits =
-        let open Bitset in
-        let opcode = restrict ~lo:0 ~hi:6 bits
-        and rd = restrict ~lo:7 ~hi:11 bits
-        and funct3 = restrict ~lo:12 ~hi:14 bits
-        and rs1 = restrict ~lo:15 ~hi:19 bits
-        and imm12 = restrict ~lo:20 ~hi:31 bits in
-        { rd; opcode; funct3; rs1; imm12 }
+        let open Bitset in {
+          modifier = restrict ~lo:0 ~hi:1 bits;
+          opcode = restrict ~lo:2 ~hi:6 bits;
+          rd = restrict ~lo:7 ~hi:11 bits;
+          funct3 = restrict ~lo:12 ~hi:14 bits;
+          rs1 = restrict ~lo:15 ~hi:19 bits;
+          imm12 = restrict ~lo:20 ~hi:31 bits;
+        }
 
       let lift_aux lifter st opcode =
         let s = restrict opcode in
@@ -891,6 +895,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     module Stype = struct
       type t = {
+        modifier : Bitvector.t;
         opcode : Bv.t;
         imm5 : Bv.t;
         funct3 : Bv.t;
@@ -900,14 +905,15 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       }
 
       let restrict bits =
-        let open Bitset in
-        let opcode = restrict ~lo:0 ~hi:6 bits
-        and imm5 = restrict ~lo:7 ~hi:11 bits
-        and funct3 = restrict ~lo:12 ~hi:14 bits
-        and rs1 = restrict ~lo:15 ~hi:19 bits
-        and rs2 = restrict ~lo:20 ~hi:24 bits
-        and imm7 = restrict ~lo:25 ~hi:31 bits in
-        { imm7; imm5; funct3; opcode; rs1; rs2 }
+        let open Bitset in {
+          modifier = restrict ~lo:0 ~hi:1 bits;
+          opcode = restrict ~lo:2 ~hi:6 bits;
+          imm5 = restrict ~lo:7 ~hi:11 bits;
+          funct3 = restrict ~lo:12 ~hi:14 bits;
+          rs1 = restrict ~lo:15 ~hi:19 bits;
+          rs2 = restrict ~lo:20 ~hi:24 bits;
+          imm7 = restrict ~lo:25 ~hi:31 bits;
+        }
 
       let branch lift st opcode =
         let s = restrict opcode in
@@ -951,17 +957,19 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     module Utype = struct
       type t = {
+        modifier : Bitvector.t;
         opcode : Bv.t;
         rd : Bv.t;
         imm20 : Bv.t
       }
 
       let restrict bits =
-        let open Bitset in
-        let opcode = restrict ~lo:0 ~hi:6 bits
-        and rd = restrict ~lo:7 ~hi:11 bits
-        and imm20 = restrict ~lo:12 ~hi:31 bits in
-        { opcode; rd; imm20 }
+        let open Bitset in {
+          modifier = restrict ~lo:0 ~hi:1 bits;
+          opcode = restrict ~lo:2 ~hi:6 bits;
+          rd = restrict ~lo:7 ~hi:11 bits;
+          imm20 = restrict ~lo:12 ~hi:31 bits;
+        }
 
       let apply lift_f st opcode =
         let s = restrict opcode in
@@ -975,17 +983,19 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     module Jtype = struct
       type t = { 
+        modifier : Bitvector.t;
         opcode : Bv.t;
         rd : Bv.t;
         imm20 : Bv.t 
       }
 
       let restrict bits =
-        let open Bitset in
-        let opcode = restrict ~lo:0 ~hi:6 bits
-        and rd = restrict ~lo:7 ~hi:11 bits
-        and imm20 = restrict ~lo:12 ~hi:31 bits in
-        { rd; imm20; opcode }
+        let open Bitset in {
+          modifier = restrict ~lo:0 ~hi:1 bits;
+          opcode = restrict ~lo:2 ~hi:6 bits;
+          rd = restrict ~lo:7 ~hi:11 bits;
+          imm20 = restrict ~lo:12 ~hi:31 bits;
+        }
 
       let jal st bits =
         let s = restrict bits in
