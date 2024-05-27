@@ -201,7 +201,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let addAddr addr = 
       actoffaddrset := ActAddrSet.add (Virtual_address.to_bigint addr) (!actoffaddrset)
     
-    let isAddr addr = 
+    let isAddrAMiDecrease addr = 
       ActAddrSet.mem (Virtual_address.to_bigint addr) !actoffaddrset
 
     module Block = struct
@@ -222,11 +222,16 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         { b with insts = inst :: b.insts }
 
       let ini inst = empty +++ inst
-      let ( !! ) b = { insts = List.rev b.insts; sealed = true }
+      let ( !! ) addr b =
+        match isAddrAMiDecrease addr with
+          | true ->
+            { insts = List.rev b.insts; sealed = true }
+          | false ->
+            { insts = List.rev b.insts; sealed = true }
 
-      let seal a b =
+      let seal addr a b =
         let last = lab last_label (vajmp a) in
-        !!(b +++ last)
+        !! addr (b +++ last) 
 
       let is_sealed b = b.sealed
 
@@ -374,7 +379,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | `Standard ->
           ini (tmpvar <-- de)
           +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
-      ) |> seal (D_status.next st)
+      ) |> seal (D_status.addr st) (D_status.next st)
     
     let standard mnemonic st ~md ~dst ~de = 
       let std_md = standardModifier_of_md md in
@@ -410,7 +415,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         ini
           (store_f (De.add (reg_bv base) (mk_imm offset))
           <-- restrict (reg_bv src))
-        |> seal (D_status.next st)
+        |> seal (D_status.addr st) (D_status.next st)
       in
       let mnemonic =
         (* The order src,offset(dst) is the one adopted by objdump *)
@@ -451,7 +456,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           let jump_addr = jmp_offset st offset in
           let jneg = aoff (D_status.next st) in
           let jpos = aoff jump_addr in
-          !!(ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
+          !! (D_status.addr st) (ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
         | `Activating ->
           let jump_addr = jmp_offset st offset in
           addAddr jump_addr;
@@ -462,12 +467,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           +++ (mimicEnd <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) jpos (mimicEnd))
           +++ (mimicSta <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) jneg (mimicSta))
           +++ (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) (De.ones 32) (mimicCount))
-          |> seal (D_status.next st)
+          |> seal (D_status.addr st) (D_status.next st)
         | `ConstantTime ->
           let jump_addr = jmp_offset st offset in
           let jneg = aoff (D_status.next st) in
           let jpos = aoff jump_addr in
-          !!(ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
+          !!(D_status.addr st) (ini @@ ejmp (De.ite (cmp (reg_bv src1) (reg_bv src2)) jpos jneg))
         
   
     let branch name cmp st ~md ~src1 ~src2 ~offset =
@@ -511,7 +516,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let dst_e = reg_bv dst in
       let do_seal = seal (D_status.next st) in
       (* nop when dst is zero *)
-      if is_x0 dst_e then ("nop", do_seal empty)
+      if is_x0 dst_e then ("nop", do_seal (D_status.addr st) empty)
       else
         let src_e = reg_bv src in
         let mnemonic =
@@ -529,7 +534,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       let dst_e = reg_bv dst in
       let do_seal = seal (D_status.next st) in
       (* nop when dst is zero *)
-      if is_x0 dst_e then ("nop", do_seal empty)
+      if is_x0 dst_e then ("nop", do_seal (D_status.addr st) empty)
       else
         let src_e = reg_bv src in
         let mnemonic = op_imm "addiw" ~dst ~src ~imm in
@@ -717,13 +722,13 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       in
       let dba = match jal_md with 
         | `Persistent -> 
-          !!(ini (reg_bv dst <-- aoff (D_status.next st)) 
+          !! (D_status.addr st) (ini (reg_bv dst <-- aoff (D_status.next st)) 
           +++ vajmp jmp_addr)
         | `Activating ->
           let jsta = aoff st.addr in
           let jend = aoff (D_status.next st) in 
           addAddr (D_status.next st);
-          !!(ini (reg_bv dst <-- jend)
+          !! (D_status.addr st) (ini (reg_bv dst <-- jend)
           +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
           +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
           +++ (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jsta (mimicSta))
@@ -762,7 +767,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
               +++ (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jsta (mimicSta))
               +++ (mimicCount <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.ones 32) (mimicCount)) 
       in
-      let dba = !!(sr +++ ejmp temp) in
+      let dba = !!(D_status.addr st) (sr +++ ejmp temp) in
       let mnemonic =
         if is_x0 r then "ret"
         else
@@ -1253,7 +1258,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           let mnemonic, dba = I.Itype.jalr st opcode in
           ins @@ Inst.create ~mnemonic ~dba ~opcode
       | 0x0b -> (* mark debug instruction *)
-          let mnemonic, dba = ("nop", D.Block.empty |> D.Block.seal (D_status.next st)) in
+          let mnemonic, dba = ("nop", D.Block.empty |> D.Block.seal (D_status.addr st) (D_status.next st)) in
           ins @@ Inst.create ~mnemonic ~dba ~opcode
       | _ ->
         unk @@ Format.asprintf "Unknown opcode %a" Bitvector.pp_hex opcode
