@@ -205,9 +205,18 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       ActAddrSet.mem (Virtual_address.to_bigint addr) !actoffaddrset
     
     (* TODO check bitsize *)
+    let mimicInit = ref false
+
     let mimicCount = De.v ((Dba.Var.create "MimicCount" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
     let mimicSta = De.v ((Dba.Var.create "MimicSta" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
     let mimicEnd = De.v ((Dba.Var.create "MimicEnd" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty))
+
+    let initinst () = match !mimicInit with
+      | false -> mimicInit := true; 
+      [ (mimicEnd <-- (De.zeros 32));
+        (mimicSta <-- (De.zeros 32));
+        (mimicCount <-- (De.zeros 32))]
+      | _ -> []
 
     module Block = struct
       type t = { sealed : bool; insts : inst list }
@@ -232,11 +241,11 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           | true, h :: t ->
             let jend = aoff addr in
             { insts = List.rev (
-              h :: 
+             (h :: 
              (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicEnd))) ::
              (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicSta))) ::
              (mimicCount <-- (De.ite (De.equal (mimicEnd) jend)) (De.sub (mimicCount) (De.ones 32)) (mimicCount)) ::
-              t)
+              t) @ (initinst ()) )
             ; sealed = true }
           | false, _ ->
             { insts = List.rev b.insts; sealed = true }
@@ -468,7 +477,6 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | `Activating ->
           let jump_addr = jmp_offset st offset in
           addAddr jump_addr;
-          assert(Virtual_address.to_bigint st.addr < Virtual_address.to_bigint jump_addr);
           let jneg = aoff st.addr in
           let jpos = aoff jump_addr in 
           ini (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal (mimicSta) jneg))) (De.add (mimicCount) (De.ones 32)) (mimicCount))
