@@ -479,10 +479,10 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           addAddr jump_addr;
           let jneg = aoff st.addr in
           let jpos = aoff jump_addr in 
-          ini (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal (mimicSta) jneg))) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-          +++ (mimicEnd <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal mimicCount (De.zeros 32)))) jpos (mimicEnd))
-          +++ (mimicSta <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal mimicCount (De.zeros 32)))) jneg (mimicSta))
-          +++ (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal mimicCount (De.zeros 32)))) (De.ones 32) (mimicCount))
+          ini (mimicCount <-- (De.ite (De.binary And (De.equal (mimicSta) jneg) (cmp (reg_bv src1) (reg_bv src2)))) (De.add (mimicCount) (De.ones 32)) (mimicCount))
+          +++ (mimicEnd <-- (De.ite (De.binary And (De.equal mimicCount (De.zeros 32)) (cmp (reg_bv src1) (reg_bv src2)))) jpos (mimicEnd))
+          +++ (mimicSta <-- (De.ite (De.binary And (De.equal mimicCount (De.zeros 32)) (cmp (reg_bv src1) (reg_bv src2)) )) jneg (mimicSta))
+          +++ (mimicCount <-- (De.ite (De.binary And (De.equal mimicCount (De.zeros 32)) (cmp (reg_bv src1) (reg_bv src2)))) (De.ones 32) (mimicCount))
           |> seal (D_status.addr st) (D_status.next st)
         | `ConstantTime ->
           let jump_addr = jmp_offset st offset in
