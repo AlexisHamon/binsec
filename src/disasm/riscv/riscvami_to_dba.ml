@@ -233,8 +233,8 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
             let jend = aoff addr in
             { insts = List.rev (
               h :: 
-             (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.zeros 32) (mimicEnd)) ::
-             (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.zeros 32) (mimicSta)) ::
+             (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicEnd))) ::
+             (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicSta))) ::
              (mimicCount <-- (De.ite (De.equal (mimicEnd) jend)) (De.sub (mimicCount) (De.ones 32)) (mimicCount)) ::
               t)
             ; sealed = true }
@@ -379,14 +379,14 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       (match std_md with
         | `Ghost ->
           ini (tmpvar <-- de)
-          +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+          +++ (reg_bv dst <-- De.ite (De.equal mimicCount (De.zeros 32)) (reg_bv dst) (tmpvar))
         | `Mimic ->
           ini (tmpvar <-- de)
         | `Persistent ->
           ini (reg_bv dst <-- de)
         | `Standard ->
           ini (tmpvar <-- de)
-          +++ (reg_bv dst <-- De.ite (De.lognot (De.restrict 0 0 mimicCount)) (reg_bv dst) (tmpvar))
+          +++ (reg_bv dst <-- De.ite (De.equal mimicCount (De.zeros 32)) (tmpvar) (reg_bv dst))
       ) |> seal (D_status.addr st) (D_status.next st)
     
     let standard mnemonic st ~md ~dst ~de = 
@@ -472,9 +472,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           let jneg = aoff st.addr in
           let jpos = aoff jump_addr in 
           ini (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal (mimicSta) jneg))) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-          +++ (mimicEnd <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) jpos (mimicEnd))
-          +++ (mimicSta <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) jneg (mimicSta))
-          +++ (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.lognot (De.restrict 0 0 mimicCount)))) (De.ones 32) (mimicCount))
+          +++ (mimicEnd <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal mimicCount (De.zeros 32)))) jpos (mimicEnd))
+          +++ (mimicSta <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal mimicCount (De.zeros 32)))) jneg (mimicSta))
+          +++ (mimicCount <-- (De.ite (De.binary And (cmp (reg_bv src1) (reg_bv src2)) (De.equal mimicCount (De.zeros 32)))) (De.ones 32) (mimicCount))
           |> seal (D_status.addr st) (D_status.next st)
         | `ConstantTime ->
           let jump_addr = jmp_offset st offset in
@@ -738,9 +738,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           addAddr (D_status.next st);
           !! (D_status.addr st) (ini (reg_bv dst <-- jend)
           +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-          +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
-          +++ (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jsta (mimicSta))
-          +++ (mimicCount <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.ones 32) (mimicCount)) 
+          +++ (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32))) jend (mimicEnd))
+          +++ (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32))) jsta (mimicSta))
+          +++ (mimicCount <-- (De.ite (De.equal mimicCount (De.zeros 32))) (De.ones 32) (mimicCount)) 
           +++ vajmp jmp_addr)
       in 
       let prefix = string_of_jalModifier jal_md in 
@@ -771,9 +771,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
               addAddr (D_status.next st);
               base +++ (r <-- next)
               +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-              +++ (mimicEnd <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jend (mimicEnd))
-              +++ (mimicSta <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) jsta (mimicSta))
-              +++ (mimicCount <-- (De.ite (De.lognot (De.restrict 0 0 mimicCount))) (De.ones 32) (mimicCount)) 
+              +++ (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32))) jend (mimicEnd))
+              +++ (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32))) jsta (mimicSta))
+              +++ (mimicCount <-- (De.ite (De.equal mimicCount (De.zeros 32))) (De.ones 32) (mimicCount)) 
       in
       let dba = !!(D_status.addr st) (sr +++ ejmp temp) in
       let mnemonic =
