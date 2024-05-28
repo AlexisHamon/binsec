@@ -530,9 +530,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     (** add with immediate: dst = src + imm *)
     let addi st ~md ~dst ~src ~imm =
       let dst_e = reg_bv dst in
-      let do_seal = seal (D_status.next st) in
+      let do_seal = seal (D_status.addr st) (D_status.next st) in
       (* nop when dst is zero *)
-      if is_x0 dst_e then ("nop", do_seal (D_status.addr st) empty)
+      if is_x0 dst_e then ("nop", do_seal empty)
       else
         let src_e = reg_bv src in
         let mnemonic =
@@ -548,9 +548,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     let addiw st ~md ~dst ~src ~imm =
       assert_mode_is_64 "addiw";
       let dst_e = reg_bv dst in
-      let do_seal = seal (D_status.next st) in
+      let do_seal = seal (D_status.addr st) (D_status.next st) in
       (* nop when dst is zero *)
-      if is_x0 dst_e then ("nop", do_seal (D_status.addr st) empty)
+      if is_x0 dst_e then ("nop", do_seal empty)
       else
         let src_e = reg_bv src in
         let mnemonic = op_imm "addiw" ~dst ~src ~imm in
@@ -1274,7 +1274,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           let mnemonic, dba = I.Itype.jalr st opcode in
           ins @@ Inst.create ~mnemonic ~dba ~opcode
       | 0x0b -> (* mark debug instruction *)
-          let mnemonic, dba = ("nop", D.Block.empty |> D.Block.seal (D_status.addr st) (D_status.next st)) in
+          let mnemonic, dba = ("mark", D.Block.empty |> D.Block.seal (D_status.addr st) (D_status.next st)) in
           ins @@ Inst.create ~mnemonic ~dba ~opcode
       | _ ->
         unk @@ Format.asprintf "Unknown opcode %a" Bitvector.pp_hex opcode
