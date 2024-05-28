@@ -384,7 +384,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
     
     let standardinst st ~std_md ~dst ~de = 
       (* TODO check bitsize *)
-      let tmpvar = De.v ((Dba.Var.create "LoadAMi" ~bitsize:(Size.Bit.bits32) ~tag:Dba.Var.Tag.Empty)) in
+     let tmpvar = De.temporary ~size:mode_size "LoadAMi" in
       (match std_md with
         | `Ghost ->
           ini (tmpvar <-- de)
