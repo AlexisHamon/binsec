@@ -248,7 +248,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
               t) @ (initinst ()) )
             ; sealed = true }
           | false, _ ->
-            { insts = List.rev b.insts; sealed = true }
+            { insts = List.rev (b.insts @ (initinst ())); sealed = true }
           | _ -> assert(false)
 
       let seal addr a b =
