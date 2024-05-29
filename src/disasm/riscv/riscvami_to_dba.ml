@@ -511,9 +511,10 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           addAddr jump_addr;
           let jneg = aoff st.addr in
           let jpos = aoff jump_addr in 
-          ini (ite (cmp (reg_bv src1) (reg_bv src2)) "then" Block.last_label)
-          +++ (lab "then" (ite (De.equal mimicCount (De.zeros 32)) "setmimic" "tryincrmimic"))
-          +++ (lab "tryincrmimic" ((ite (De.equal (mimicSta) jneg) "incrmimic" Block.last_label)))
+          ini (ite (De.equal mimicCount (De.zeros 32)) "condsetmimic" "tryincrmimic")
+          +++ (lab "condsetmimic" (ite (cmp (reg_bv src1) (reg_bv src2)) "setmimic" Block.last_label))
+          +++ (lab "tryincrmimic" ((ite (De.equal (mimicSta) jneg) "condincrmimic" Block.last_label)))
+          +++ (lab "condincrmimic" (ite (cmp (reg_bv src1) (reg_bv src2)) "incrmimic" Block.last_label))
           +++ (lab "incrmimic" (mimicCount <-- (De.add (mimicCount) (De.ones 32))))
           +++ (ljmp Block.last_label)
           +++ (lab "setmimic" (mimicEnd <-- jpos))
