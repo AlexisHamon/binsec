@@ -237,19 +237,18 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
       let ini inst = empty +++ inst
       let ( !! ) addr b =
-        match isAddrAMiDecrease addr, b.insts with
-          | true, h :: t ->
+        match isAddrAMiDecrease addr  with
+          | true ->
             let jend = aoff addr in
             { insts = List.rev (
-             (h :: 
-             (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicEnd))) ::
-             (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicSta))) ::
-             (mimicCount <-- (De.ite (De.equal (mimicEnd) jend)) (De.sub (mimicCount) (De.ones 32)) (mimicCount)) ::
-              t) @ (initinst ()) )
+             (b.insts @ [
+             (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicEnd)));
+             (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicSta)));
+             (mimicCount <-- (De.ite (De.equal (mimicEnd) jend)) (De.sub (mimicCount) (De.ones 32)) (mimicCount))
+             ] @ (initinst ()) ))
             ; sealed = true }
-          | false, _ ->
+          | false ->
             { insts = List.rev (b.insts @ (initinst ())); sealed = true }
-          | _ -> assert(false)
 
       let seal addr a b =
         let last = lab last_label (vajmp a) in
