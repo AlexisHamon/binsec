@@ -117,7 +117,12 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       if Bv.is_zero offset then ve else De.add ve (mk_imm offset)
 
     let vajmp ?(offset = 0) va = cjmp (Virtual_address.add_int offset va)
-    let _ljmp l = jmp (L l)
+    let ljmp l = jmp (L l)
+    
+    let ite e l_then l_else =
+      if (l_then = l_else)
+      then ljmp l_then
+      else If (e, l_then, l_else)
 
     let lab label inst =
       match inst with
@@ -239,19 +244,41 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         { b with insts = inst :: b.insts }
 
       let ini inst = empty +++ inst
+
+      let rec addlabeltofirst binsts l =
+        let lab' label inst =
+          match inst with
+          | Lab (l, _) -> (l, inst)
+          | _ -> (label, Lab (label, inst)) in
+        match binsts with
+          | [] -> assert(false)
+          | [x] -> 
+            let label, inst = lab' l x in
+              (label, [inst])
+          | h :: t -> 
+            let label, insts = addlabeltofirst t l in
+              (label, h :: insts)
+        
       let ( !! ) addr b =
+        let binsts = match b.insts with
+          | Lab (l, _) :: _ when (l=last_label) -> b.insts
+          | Lab _ :: _ | [] -> assert(false) 
+          | h :: t -> lab last_label h :: t in
+        let (startlabel, binsts) = addlabeltofirst binsts "blockinstr" in
         match isAddrAMiDecrease addr  with
           | true ->
             let jend = aoff addr in
             { insts = List.rev (
-             (b.insts @ [
-             (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicEnd)));
-             (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32)) (De.zeros 32) (mimicSta)));
-             (mimicCount <-- (De.ite (De.equal (mimicEnd) jend)) (De.sub (mimicCount) (De.ones 32)) (mimicCount))
-             ] @ (initinst ()) ))
+             (binsts @ [
+              (mimicSta <-- (De.zeros 32));
+              (lab "setmimiczero" (mimicEnd <-- (De.zeros 32)));
+              (ite (De.equal mimicCount (De.zeros 32)) "setmimiczero" startlabel);
+              (lab "decrmimic" (mimicCount <-- (De.sub (mimicCount) (De.ones 32))));
+              (ite (De.equal (mimicEnd) jend) "decrmimic" startlabel);
+               ] @ (initinst ()) ))
             ; sealed = true }
           | false ->
-            { insts = List.rev (b.insts @ (initinst ())); sealed = true }
+            { insts = List.rev (binsts @ (initinst ())); sealed = true }
 
       let seal addr a b =
         let last = lab last_label (vajmp a) in
@@ -384,20 +411,23 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
         | `Persistent -> "p."
         | `Standard -> "s."
     
+    let assign_label = "effect"
     let standardinst st ~std_md ~dst ~de = 
       (* TODO check bitsize *)
      let tmpvar = De.temporary ~size:mode_size "LoadAMi" in
       (match std_md with
         | `Ghost ->
           ini (tmpvar <-- de)
-          +++ (reg_bv dst <-- De.ite (De.equal mimicCount (De.zeros 32)) (reg_bv dst) (tmpvar))
+          +++ (ite (De.equal mimicCount (De.zeros 32)) Block.last_label assign_label)
+          +++ (lab assign_label (reg_bv dst <-- tmpvar))
         | `Mimic ->
           ini (tmpvar <-- de)
         | `Persistent ->
           ini (reg_bv dst <-- de)
         | `Standard ->
           ini (tmpvar <-- de)
-          +++ (reg_bv dst <-- De.ite (De.equal mimicCount (De.zeros 32)) (tmpvar) (reg_bv dst))
+          +++ (ite (De.equal mimicCount (De.zeros 32)) assign_label Block.last_label)
+          +++ (lab assign_label (reg_bv dst <-- tmpvar))
       ) |> seal (D_status.addr st) (D_status.next st)
     
     let standard mnemonic st ~md ~dst ~de = 
@@ -481,10 +511,14 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           addAddr jump_addr;
           let jneg = aoff st.addr in
           let jpos = aoff jump_addr in 
-          ini (mimicCount <-- (De.ite (De.binary And (De.equal (mimicSta) jneg) (cmp (reg_bv src1) (reg_bv src2)))) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-          +++ (mimicEnd <-- (De.ite (De.binary And (De.equal mimicCount (De.zeros 32)) (cmp (reg_bv src1) (reg_bv src2)))) jpos (mimicEnd))
-          +++ (mimicSta <-- (De.ite (De.binary And (De.equal mimicCount (De.zeros 32)) (cmp (reg_bv src1) (reg_bv src2)) )) jneg (mimicSta))
-          +++ (mimicCount <-- (De.ite (De.binary And (De.equal mimicCount (De.zeros 32)) (cmp (reg_bv src1) (reg_bv src2)))) (De.ones 32) (mimicCount))
+          ini (ite (cmp (reg_bv src1) (reg_bv src2)) "then" Block.last_label)
+          +++ (lab "then" (ite (De.equal mimicCount (De.zeros 32)) "setmimic" "tryincrmimic"))
+          +++ (lab "tryincrmimic" ((ite (De.equal (mimicSta) jneg) "incrmimic" Block.last_label)))
+          +++ (lab "incrmimic" (mimicCount <-- (De.add (mimicCount) (De.ones 32))))
+          +++ (ljmp Block.last_label)
+          +++ (lab "setmimic" (mimicEnd <-- jpos))
+          +++ (mimicSta <-- jneg)
+          +++ (mimicCount <-- (De.ones 32))
           |> seal (D_status.addr st) (D_status.next st)
         | `ConstantTime ->
           let jump_addr = jmp_offset st offset in
@@ -747,10 +781,13 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           let jend = aoff (D_status.next st) in 
           addAddr (D_status.next st);
           !! (D_status.addr st) (ini (reg_bv dst <-- jend)
-          +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-          +++ (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32))) jend (mimicEnd))
-          +++ (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32))) jsta (mimicSta))
-          +++ (mimicCount <-- (De.ite (De.equal mimicCount (De.zeros 32))) (De.ones 32) (mimicCount)) 
+          +++ (lab "then" (ite (De.equal mimicCount (De.zeros 32)) "setmimic" "tryincrmimic"))
+          +++ (lab "tryincrmimic" ((ite (De.equal (mimicSta) jsta) "incrmimic" Block.last_label)))
+          +++ (lab "incrmimic" (mimicCount <-- (De.add (mimicCount) (De.ones 32))))
+          +++ (ljmp Block.last_label)
+          +++ (lab "setmimic" (mimicEnd <-- jend))
+          +++ (mimicSta <-- jsta)
+          +++ (mimicCount <-- (De.ones 32))
           +++ vajmp jmp_addr)
       in 
       let prefix = string_of_jalModifier jal_md in 
@@ -780,10 +817,13 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
               let jend = aoff (D_status.next st) in 
               addAddr (D_status.next st);
               base +++ (r <-- next)
-              +++ (mimicCount <-- (De.ite (De.equal (mimicSta) jsta)) (De.add (mimicCount) (De.ones 32)) (mimicCount))
-              +++ (mimicEnd <-- (De.ite (De.equal mimicCount (De.zeros 32))) jend (mimicEnd))
-              +++ (mimicSta <-- (De.ite (De.equal mimicCount (De.zeros 32))) jsta (mimicSta))
-              +++ (mimicCount <-- (De.ite (De.equal mimicCount (De.zeros 32))) (De.ones 32) (mimicCount)) 
+              +++ (lab "then" (ite (De.equal mimicCount (De.zeros 32)) "setmimic" "tryincrmimic"))
+              +++ (lab "tryincrmimic" ((ite (De.equal (mimicSta) jsta) "incrmimic" Block.last_label)))
+              +++ (lab "incrmimic" (mimicCount <-- (De.add (mimicCount) (De.ones 32))))
+              +++ (ljmp Block.last_label)
+              +++ (lab "setmimic" (mimicEnd <-- jend))
+              +++ (mimicSta <-- jsta)
+              +++ (mimicCount <-- (De.ones 32))
       in
       let dba = !!(D_status.addr st) (sr +++ ejmp temp) in
       let mnemonic =
