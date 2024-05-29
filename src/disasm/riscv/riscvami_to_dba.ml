@@ -94,6 +94,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
 
     type inst =
       | Asg of Dba.Expr.t * Dba.Expr.t (* Asg(dst, src) *)
+      | If of Dba.Expr.t * label * label
       | Jmp of jt
       | Lab of label * inst
       | Nop
@@ -147,7 +148,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
           let else_ = replace_zero else_ in
           De.ite cond then_ else_
 
-    let rec to_dba_instr instr ?id lbl_id =
+    let rec to_dba_instr instr id lbl_id =
       match instr with
 
       | Asg (src, dst) ->
@@ -168,12 +169,13 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
                   Dba.LValue.store (Size.Byte.create sz) endianness e ?array
             in
             let dst = replace_zero dst in
-            let id =
-              match id with
-              | None -> raise (Invalid_argument "to_dba_instr")
-              | Some i -> i
-            in
             Some (Di.assign lval dst (id + 1))
+      | If (e, l_then, l_else) ->
+        assert (StrMap.mem l_then lbl_id);
+        assert (StrMap.mem l_else lbl_id);
+        Some(
+          Di.ite e (Dba.Jump_target.inner (StrMap.find l_then lbl_id)) (StrMap.find l_else lbl_id)
+        )
       | Jmp jt ->
           Some
             (match jt with
@@ -182,7 +184,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
                 Di.static_jump
                   Dba.(JOuter (Dba_types.Caddress.of_virtual_address c))
             | L l -> Di.static_inner_jump (StrMap.find l lbl_id))
-      | Lab (_, i) -> to_dba_instr i lbl_id
+      | Lab (_, i) -> to_dba_instr i id lbl_id
       | Nop -> None
 
     let pp_e = Dba_printer.EICAscii.pp_bl_term
@@ -192,6 +194,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
       | Jmp (E e) -> Format.fprintf ppf "@[<h>ej %a@]" pp_e e
       | Jmp (C va) -> Format.fprintf ppf "@[<h>j %@%a@]" Virtual_address.pp va
       | Jmp (L l) -> Format.fprintf ppf "@[<h>lj :%s:@]" l
+      | If  (e, lt, le) -> Format.fprintf ppf "@[<h>lj :%a?%s:%s:@]" pp_e e lt le
       | Lab (l, i) -> Format.fprintf ppf "@[<h>:%s: %a@]" l pp i
       | Nop -> Format.pp_print_string ppf "nop"
 
@@ -280,7 +283,7 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
               (* invariant: no Label (Label e)) *)
               match instr with
               | Lab (lbl, _) -> (id + 1, StrMap.add lbl id map)
-              | Asg _ | Jmp _ | Nop -> (id + 1, map))
+              | Asg _ | Jmp _ | If _ | Nop -> (id + 1, map))
             (0, StrMap.empty) b.insts
         in
         (* check that block contains more than Nop *)
@@ -291,9 +294,9 @@ module Riscv_to_Dba (M : Riscv_arch.RegisterSize) = struct
             (fun (id, l) instr ->
               match instr with
               | Nop -> (id, l)
-              | Jmp _ -> (id + 1, add_opt (to_dba_instr instr lbl_id) l)
+              | Jmp _ | If _-> (id + 1, add_opt (to_dba_instr instr id lbl_id) l)
               | Asg _ | Lab _ ->
-                  (id + 1, add_opt (to_dba_instr ~id instr lbl_id) l))
+                  (id + 1, add_opt (to_dba_instr instr id lbl_id) l))
             (0, []) b.insts
         in
         List.rev instrs |> Dhunk.of_list
