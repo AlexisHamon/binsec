@@ -532,7 +532,16 @@ module Make
               ignore
                 (G.insert_before graph vertex
                    (Builtin (Check (addr, Memory_access))))
-          | Branch { test = expr; _ } | Terminator (Jump { target = expr; _ })
+          | Branch { test = expr; target = target; fallthrough = fallthrough }
+            -> begin match G.node graph target, G.node graph fallthrough with
+                | Fallthrough { kind = Instruction _; _}, _ 
+                | _, Fallthrough { kind = Instruction _; _} ->
+              ignore
+                (G.insert_before graph vertex
+                  (Builtin (Check (expr, Control_flow))))
+                | _ -> ()
+            end
+          | Terminator (Jump { target = expr; _ })
             ->
               ignore
                 (G.insert_before graph vertex
