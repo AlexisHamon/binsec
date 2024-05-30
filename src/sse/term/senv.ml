@@ -428,7 +428,9 @@ struct
   let get_value (e : Expr.t) _ =
     match e with Cst bv -> bv | _ -> raise_notrace Non_unique
 
-  let get_a_value (e : Expr.t) t = Model.eval t.model e
+  let get_a_value (e : Expr.t) t = 
+    try get_value e t with 
+    | Non_unique -> Model.eval t.model e
 
   let pp_smt (target : Expr.t Types.target) ppf t =
     let module P = Smt2_solver.Printer in
