@@ -93,7 +93,7 @@ module Inline (P : Path.S) (S : STATE) :
               List.fold_left
                 (fun (ptr_v, state) addr ->
                   let addr = Script.eval_expr ~size:env.wordsize addr env in
-                  let addr, state = Eval.safe_eval addr state path in
+                  let addr = Eval.safe_eval addr state path in
                   ( S.Value.binary Plus ptr_v offset,
                     S.store array ~addr:ptr_v addr LittleEndian state ))
                 (S.Value.constant (Bitvector.zeros pointer_size), state)
@@ -228,8 +228,8 @@ module Builtin (P : Path.S) (S : STATE) :
         Error Assertion_failed
     | witness :: tail -> (
         P.set key tail path;
-        let target_v = Eval.eval target state
-        and witness_v = Eval.eval witness state in
+        let target_v, state = Eval.eval target state path in
+        let witness_v, state = Eval.eval witness state path in
         match S.test (S.Value.binary Eq target_v witness_v) state with
         | True state -> Ok state
         | False state ->

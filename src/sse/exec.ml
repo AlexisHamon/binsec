@@ -287,17 +287,16 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
     @@ S.Map.find name (Path.get State.symbols path);
     Buffer.contents buf
 
-  let c_string array state =
+  let c_string array state path =
     try
       let buf = Buffer.create 16 in
       let rec iter addr =
+        let value, state = Eval.eval
+        (Expr.load ~array Size.Byte.one Machine.LittleEndian
+           (Expr.constant addr))
+        state path in
         let byte =
-          State.get_a_value
-            (Eval.eval
-               (Expr.load ~array Size.Byte.one Machine.LittleEndian
-                  (Expr.constant addr))
-               state)
-            state
+          State.get_a_value value state
         in
         if Bitvector.is_zeros byte then Buffer.contents buf
         else (
@@ -319,7 +318,7 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
         let slice =
           let rec proceed slice state =
             try
-              List.map (fun (expr, name) -> (Eval.eval expr state, name)) slice
+              List.map (fun (expr, name) -> (fst (Eval.eval expr state path), name)) slice
             with
             | Undef var -> proceed slice (Eval.fresh var state path)
             | Uninterp array -> proceed slice (State.alloc ~array state)
@@ -340,7 +339,7 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
         Logger.result "@[<v 0>Ascii stream %s : %S@]" name
           (ascii_stream name path state)
     | String name ->
-        Logger.result "@[<v 0>C string %s : %S@]" name (c_string name state)
+        Logger.result "@[<v 0>C string %s : %S@]" name (c_string name state path)
 
   let rec exec :
       type a.
@@ -379,6 +378,7 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
     | Symbolize { var; succ } ->
         exec mode path depth ~max_depth (Eval.fresh var state path) ip succ
     | Assign { var; rval; succ } ->
+        Logger.result "@[<v 0>%a: %s<-%a@]" Dba_printer.Ascii.pp_bl_term rval var.name Virtual_address.pp ip;
         exec mode path depth ~max_depth
           (Eval.assign var rval state path)
           ip succ

@@ -58,27 +58,75 @@ module Raw (State : RAW_STATE) = struct
     | RShiftS -> Asr
     | LeftRotate -> Rol
     | RightRotate -> Ror
-
-  let rec eval (e : Types.Expr.t) state =
+  
+  let rec old_eval (e : Types.Expr.t) state =
     match e with
     | Cst bv | Var { info = Symbol (_, (lazy bv)); _ } ->
         State.Value.constant bv
-    | Var var -> State.lookup var state
+    | Var var -> 
+        State.lookup var state
     | Load (len, dir, addr, None) ->
-        fst (State.read ~addr:(eval addr state) len dir state)
+      let addrv = old_eval addr state in
+        fst (State.read ~addr:addrv len dir state)
     | Load (len, dir, addr, Some name) ->
-        fst (State.select name ~addr:(eval addr state) len dir state)
-    | Unary (f, x) -> State.Value.unary (uop x f) (eval x state)
+      let addrv = old_eval addr state in
+        fst (State.select name ~addr:addrv len dir state)
+    | Unary (f, x) -> 
+      let xv = old_eval x state in
+        (State.Value.unary (uop x f) xv)
     | Binary (f, x, y) ->
-        State.Value.binary (bop f) (eval x state) (eval y state)
+      let xv = old_eval x state in
+      let yv = old_eval y state in
+        (State.Value.binary (bop f) xv yv)
     | Ite (c, r, e) ->
-        State.Value.ite (eval c state) (eval r state) (eval e state)
+      let cv = old_eval c state in
+      let rv = old_eval r state in
+      let ev = old_eval e state in
+        (State.Value.ite cv rv ev)
 end
 
 module Make (Path : Path.S) (State : STATE) = struct
   include Raw (State)
 
-  let fresh (var : Dba.Var.t) state path =
+  let rec eval (e : Types.Expr.t) state path =
+    match e with
+    | Cst bv | Var { info = Symbol (_, (lazy bv)); _ } ->
+        (State.Value.constant bv, state)
+    | Var var -> 
+        (State.lookup var state, state)
+    | Load (len, dir, addr, None) ->
+        let addrv, state = eval addr state path in
+        (State.read ~addr:addrv len dir state)
+    | Load (len, dir, addr, Some name) ->
+        let addrv, state = eval addr state path in
+        (State.select name ~addr:addrv len dir state)
+    | Unary (f, x) -> 
+        let xv, state = eval x state path in
+        (State.Value.unary (uop x f) xv, state)
+    | Binary (f, x, y) ->
+      let xv, state = eval x state path in
+      let yv, state = eval y state path in
+        (State.Value.binary (bop f) xv yv, state)
+    | Ite (c, r, e) ->
+      match test c state path with
+        | exception Unknown | Both _ ->
+            let cv, state = eval c state path in
+            let rv, state = eval r state path in
+            let ev, state = eval e state path in
+            (State.Value.ite cv rv ev, state)
+        | True state ->
+          (eval r state path)
+        | False state ->
+          (eval e state path)
+  and test e state path =
+      Format.fprintf Format.std_formatter "@[<v 0>AAA %a@]\n" Dba_printer.Ascii.pp_expr e ;
+      try
+      let ev, state = eval e state path in
+        State.test ev state with
+      | Undef var -> test e (fresh var state path) path
+      | Uninterp array -> test e (State.alloc ~array state) path
+      
+  and fresh (var : Dba.Var.t) state path =
     let id = Path.get State.id path in
     Path.set State.id (State.Uid.succ id) path;
     let value = State.Value.var id var.name var.size in
@@ -88,55 +136,67 @@ module Make (Path : Path.S) (State : STATE) = struct
     State.assign var value state
 
   let rec safe_eval e state path =
-    try (eval e state, state) with
+    try (old_eval e state) with
     | Undef var -> safe_eval e (fresh var state path) path
     | Uninterp array -> safe_eval e (State.alloc ~array state) path
 
-  let rec get_value e state path =
-    try State.get_value (eval e state) state with
+  (*TODO also return state*)
+  let rec get_value e state path = 
+    try
+    let ev, state = eval e state path in
+      State.get_value ev state with
     | Undef var -> get_value e (fresh var state path) path
     | Uninterp array -> get_value e (State.alloc ~array state) path
 
   let rec assume e state path =
-    try State.assume (eval e state) state with
+    try
+    let ev, state = eval e state path in
+      State.assume ev state with
     | Undef var -> assume e (fresh var state path) path
     | Uninterp array -> assume e (State.alloc ~array state) path
 
-  let rec test e state path =
-    try State.test (eval e state) state with
-    | Undef var -> test e (fresh var state path) path
-    | Uninterp array -> test e (State.alloc ~array state) path
-
   let rec split_on e ?n ?except state path =
-    try State.enumerate (eval e state) ?n ?except state with
+    try
+    let ev, state = eval e state path in
+      State.enumerate ev ?n ?except state with
     | Undef var -> split_on e ?n ?except (fresh var state path) path
     | Uninterp array -> split_on e ?n ?except (State.alloc ~array state) path
 
   let rec assign name e state path =
-    try State.assign name (eval e state) state with
+    try
+    let ev, state = eval e state path in
+      State.assign name ev state with
     | Undef var -> assign name e (fresh var state path) path
     | Uninterp array -> assign name e (State.alloc ~array state) path
 
   let rec read ~addr bytes dir state path =
-    try State.read ~addr:(eval addr state) bytes dir state with
+    try
+    let addrv, state = eval addr state path in
+      State.read ~addr:addrv bytes dir state with
     | Undef var -> read ~addr bytes dir (fresh var state path) path
     | Uninterp array -> read ~addr bytes dir (State.alloc ~array state) path
 
   let rec write ~addr value dir state path =
-    try State.write ~addr:(eval addr state) (eval value state) dir state with
+    try
+    let addrv, state = eval addr state path in
+    let valuv, state = eval value state path in
+      State.write ~addr:addrv valuv dir state with
     | Undef var -> write ~addr value dir (fresh var state path) path
     | Uninterp array -> write ~addr value dir (State.alloc ~array state) path
 
   let rec select name ~addr bytes dir state path =
-    try State.select name ~addr:(eval addr state) bytes dir state with
+    try
+    let addrv, state = eval addr state path in
+      State.select name ~addr:addrv bytes dir state with
     | Undef var -> select name ~addr bytes dir (fresh var state path) path
     | Uninterp array ->
         select name ~addr bytes dir (State.alloc ~array state) path
 
   let rec store name ~addr value dir state path =
     try
-      State.store name ~addr:(eval addr state) (eval value state) dir state
-    with
+    let addrv, state = eval addr state path in
+    let valuv, state = eval value state path in
+      State.store name ~addr:addrv valuv dir state with
     | Undef var -> store name ~addr value dir (fresh var state path) path
     | Uninterp array ->
         store name ~addr value dir (State.alloc ~array state) path
