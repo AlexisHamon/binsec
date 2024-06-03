@@ -462,7 +462,8 @@ struct
         | Some model -> Some { state with formula; fid; model }
         | None -> None)
 
-  let test e state =
+  let test ?(with_smt=true) e state =
+    ignore(with_smt);
     let e = Formula.mk_bv_equal e Formula.mk_bv_one in
     let var = Formula.bl_var (Printf.sprintf "__assume_%d" state.fid) in
     let fid = state.fid + 1 in

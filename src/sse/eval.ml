@@ -84,7 +84,7 @@ module Make (Path : Path.S) (State : STATE) = struct
         (State.Value.binary (bop f) xv yv, state)
     | Ite (c, r, e) ->
       let cv, state = eval c state in
-      match State.test cv state with
+      match State.test ~with_smt:(Random.bool ()) cv state with
         | exception Unknown | Both _ ->
             let rv, state = eval r state in
             let ev, state = eval e state in

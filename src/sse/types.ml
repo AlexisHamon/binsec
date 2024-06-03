@@ -178,7 +178,7 @@ module type RAW_STATE = sig
 
   val empty : unit -> t
   val assume : Value.t -> t -> t option
-  val test : Value.t -> t -> t test
+  val test : ?with_smt:bool -> Value.t -> t -> t test
   val get_value : Value.t -> t -> Bitvector.t
   val get_a_value : Value.t -> t -> Bitvector.t
 

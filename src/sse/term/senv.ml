@@ -258,53 +258,59 @@ struct
             Overapprox.refine state cond D.one;
             Some { state with constraints })
 
-  let test cond state =
+  let test_smt cond state = 
+    let tcons = cond :: state.constraints
+    and fcons = Expr.lognot cond :: state.constraints in
+    let e = Model.eval state.model cond in
+    let to_check, constraints =
+      if Bv.is_zero e then (tcons, fcons) else (fcons, tcons)
+    in
+    QS.Solver.start_timer ();
+    let r = Solver.check_sat ?timeout state.lmem to_check in
+    QS.Solver.stop_timer ();
+    match r with
+    | Unknown -> raise Unknown
+    | Unsat ->
+      if Bv.is_zero e then (
+        Overapprox.refine state cond D.zero;
+        False { state with constraints })
+      else (
+        Overapprox.refine state cond D.one;
+        True { state with constraints })
+    | Sat model ->
+      let t, f =
+        if Bv.is_zero e then
+          ( { state with constraints = to_check; model },
+            { state with constraints } )
+        else
+          ( { state with constraints },
+            { state with constraints = to_check; model } )
+      in
+      Overapprox.refine t cond D.one;
+      Overapprox.refine f cond D.zero;
+      Both { t; f }
+      
+
+  let test ?(with_smt=true) cond state =
     if Expr.is_equal cond Expr.one then (
       QS.Preprocess.incr_true ();
       True state)
     else if Expr.is_equal cond Expr.zero then (
       QS.Preprocess.incr_false ();
       False state)
-    else
-      match D.is_zero (Overapprox.eval state cond) with
+    else begin 
+      let v = Overapprox.eval state cond in
+      Format.fprintf Format.std_formatter "@[<v 0>BBB %a@]\n" D.pp v ;
+      match D.is_zero (v) with
       | True ->
           QS.Preprocess.incr_false ();
           False state
       | False ->
           QS.Preprocess.incr_true ();
           True state
-      | Unknown -> (
-          let tcons = cond :: state.constraints
-          and fcons = Expr.lognot cond :: state.constraints in
-          let e = Model.eval state.model cond in
-          let to_check, constraints =
-            if Bv.is_zero e then (tcons, fcons) else (fcons, tcons)
-          in
-          QS.Solver.start_timer ();
-          let r = Solver.check_sat ?timeout state.lmem to_check in
-          QS.Solver.stop_timer ();
-          match r with
-          | Unknown -> raise Unknown
-          | Unsat ->
-              if Bv.is_zero e then (
-                Overapprox.refine state cond D.zero;
-                False { state with constraints })
-              else (
-                Overapprox.refine state cond D.one;
-                True { state with constraints })
-          | Sat model ->
-              let t, f =
-                if Bv.is_zero e then
-                  ( { state with constraints = to_check; model },
-                    { state with constraints } )
-                else
-                  ( { state with constraints },
-                    { state with constraints = to_check; model } )
-              in
-              Overapprox.refine t cond D.one;
-              Overapprox.refine f cond D.zero;
-              Both { t; f })
-
+      | Unknown when with_smt -> test_smt cond state
+      | Unknown -> raise Unknown
+      end
   let enumerate =
     let with_solver state e n enum except =
       QS.Solver.start_timer ();
