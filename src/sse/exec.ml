@@ -287,14 +287,14 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
     @@ S.Map.find name (Path.get State.symbols path);
     Buffer.contents buf
 
-  let c_string array state path =
+  let c_string array state =
     try
       let buf = Buffer.create 16 in
       let rec iter addr =
         let value, state = Eval.eval
         (Expr.load ~array Size.Byte.one Machine.LittleEndian
            (Expr.constant addr))
-        state path in
+        state in
         let byte =
           State.get_a_value value state
         in
@@ -318,7 +318,7 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
         let slice =
           let rec proceed slice state =
             try
-              List.map (fun (expr, name) -> (fst (Eval.eval expr state path), name)) slice
+              List.map (fun (expr, name) -> (fst (Eval.eval expr state), name)) slice
             with
             | Undef var -> proceed slice (Eval.fresh var state path)
             | Uninterp array -> proceed slice (State.alloc ~array state)
@@ -339,7 +339,7 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
         Logger.result "@[<v 0>Ascii stream %s : %S@]" name
           (ascii_stream name path state)
     | String name ->
-        Logger.result "@[<v 0>C string %s : %S@]" name (c_string name state path)
+        Logger.result "@[<v 0>C string %s : %S@]" name (c_string name state)
 
   let rec exec :
       type a.

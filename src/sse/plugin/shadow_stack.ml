@@ -228,8 +228,8 @@ module Builtin (P : Path.S) (S : STATE) :
         Error Assertion_failed
     | witness :: tail -> (
         P.set key tail path;
-        let target_v, state = Eval.eval target state path in
-        let witness_v, state = Eval.eval witness state path in
+        let target_v, state = Eval.eval target state in
+        let witness_v, state = Eval.eval witness state in
         match S.test (S.Value.binary Eq target_v witness_v) state with
         | True state -> Ok state
         | False state ->
