@@ -93,7 +93,7 @@ module Inline (P : Path.S) (S : STATE) :
               List.fold_left
                 (fun (ptr_v, state) addr ->
                   let addr = Script.eval_expr ~size:env.wordsize addr env in
-                  let addr = Eval.safe_eval addr state path in
+                  let addr, state = Eval.safe_eval addr state path in
                   ( S.Value.binary Plus ptr_v offset,
                     S.store array ~addr:ptr_v addr LittleEndian state ))
                 (S.Value.constant (Bitvector.zeros pointer_size), state)

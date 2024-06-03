@@ -58,31 +58,6 @@ module Raw (State : RAW_STATE) = struct
     | RShiftS -> Asr
     | LeftRotate -> Rol
     | RightRotate -> Ror
-  
-  let rec old_eval (e : Types.Expr.t) state =
-    match e with
-    | Cst bv | Var { info = Symbol (_, (lazy bv)); _ } ->
-        State.Value.constant bv
-    | Var var -> 
-        State.lookup var state
-    | Load (len, dir, addr, None) ->
-      let addrv = old_eval addr state in
-        fst (State.read ~addr:addrv len dir state)
-    | Load (len, dir, addr, Some name) ->
-      let addrv = old_eval addr state in
-        fst (State.select name ~addr:addrv len dir state)
-    | Unary (f, x) -> 
-      let xv = old_eval x state in
-        (State.Value.unary (uop x f) xv)
-    | Binary (f, x, y) ->
-      let xv = old_eval x state in
-      let yv = old_eval y state in
-        (State.Value.binary (bop f) xv yv)
-    | Ite (c, r, e) ->
-      let cv = old_eval c state in
-      let rv = old_eval r state in
-      let ev = old_eval e state in
-        (State.Value.ite cv rv ev)
 end
 
 module Make (Path : Path.S) (State : STATE) = struct
@@ -129,7 +104,7 @@ module Make (Path : Path.S) (State : STATE) = struct
     State.assign var value state
 
   let rec safe_eval e state path =
-    try (old_eval e state) with
+    try (eval e state) with
     | Undef var -> safe_eval e (fresh var state path) path
     | Uninterp array -> safe_eval e (State.alloc ~array state) path
 

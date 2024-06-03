@@ -740,7 +740,7 @@ module Make
       =
     if Options.leak_info = InstrLeak && is_addr_insecure addr then Ok state
     else
-      let expr = Eval.safe_eval expr state path in
+      let expr, state = Eval.safe_eval expr state path in
       let status : Status.t = analyze expr path state in
       incr (ct_status kind status);
       match status with
