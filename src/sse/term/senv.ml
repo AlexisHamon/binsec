@@ -293,9 +293,13 @@ struct
             { state with constraints = to_check; model } )
       in
       Overapprox.refine state cond (D.union ~size:1 D.zero D.one);
-      Overapprox.refine t cond D.one;
-      Overapprox.refine f cond D.zero;
-      Both (lazy { t; f })
+        
+      let get_result () = 
+        Overapprox.refine t cond D.one;
+        Overapprox.refine f cond D.zero;
+        { t; f } in
+
+      Both (lazy (get_result ()))
       
   let avoided_smt = ref 0
   let getincr () = avoided_smt := !avoided_smt + 1; !avoided_smt
@@ -324,7 +328,6 @@ struct
           | _ -> assert(false) in
         Both (lazy (aux ()))
       end
-        (* Both { t=lazy (raise (Sys_error "DO")); f= lazy (raise (Sys_error "DO"))} *)
       | Unknown when with_smt -> test_smt cond state
       | Both  | Unknown -> raise Unknown
       end
