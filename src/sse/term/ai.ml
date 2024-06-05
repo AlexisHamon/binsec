@@ -195,10 +195,11 @@ module Make (D : Domains.S) (C : CONTEXT with type v := D.t) :
         let (e : Expr.t), (d : t) = Queue.pop todo in
         let size = Expr.sizeof e in
         let o = C.find ctx e in
-        if included ~size o d then loop_down todo ctx dirty locked
+        if (D.crafted d || not (D.crafted o)) && (included ~size o d) then loop_down todo ctx dirty locked
         else
           let n = inter ~size o d in
           let locked = BvSet.add e locked in
+          Format.fprintf Format.std_formatter "@[<v 0>EEE %a@]\n" D.pp n;
           C.add ctx e n;
           let dirty =
             try BvSet.union (C.find_dependency ctx e) dirty

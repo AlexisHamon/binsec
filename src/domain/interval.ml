@@ -21,14 +21,17 @@
 
 open Common
 
-type t = { min : Z.t; max : Z.t; stride : int }
+type t = { min : Z.t; max : Z.t; stride : int; crafted : bool }
 (** Represents the unsigned fixed-width integer interval
     between [min] and [max], with [stride] fixed bits. *)
 
-let pp ppf { min; max; stride } =
-  Format.fprintf ppf "{ min = %a; max = %a; stride = %d; rem = %a }" Z.pp_print
+let pp ppf { min; max; stride; crafted } =
+  Format.fprintf ppf "{ min = %a; max = %a; stride = %d; rem = %a; crafted = %b}" Z.pp_print
     min Z.pp_print max stride Z.pp_print
     (if stride = 0 then Z.zero else Z.extract min 0 stride)
+    crafted
+
+let crafted t = t.crafted
 
 let mem i ~size:_ t =
   Z.leq t.min i && Z.leq i t.max
@@ -39,8 +42,15 @@ let included ~size:_ t t' =
   || Z.geq t.min t'.min && Z.leq t.max t'.max && t.stride >= t'.stride
      && Z.trailing_zeros (Z.logxor t.min t'.min) >= t'.stride
 
-let is_zero { stride; min; _ } =
-  if stride > 0 then if Z.testbit min 0 then False else True else Unknown
+let is_zero { stride; min; max; crafted } =
+  if stride > 0 then 
+      if Z.testbit min 0 then False else True 
+  else if stride = 0 && Z.equal min Z.zero && Z.equal max Z.one && not crafted  then
+  begin
+    Printf.printf "BOTH CALC\n";
+    Both
+  end 
+  else Unknown
 
 let project ~size t =
   if size = t.stride then Point t.min
@@ -48,13 +58,13 @@ let project ~size t =
     Top
   else Seq { start = t.min; n = Z.succ (Z.sub t.max t.min) }
 
-let top size = { min = Z.zero; max = Z.extract Z.minus_one 0 size; stride = 0 }
+let top size = { min = Z.zero; max = Z.extract Z.minus_one 0 size; stride = 0; crafted = true }
 let signed_of ~size i = Z.signed_extract i 0 size
 
 let round_down size pow rem =
   Z.logor (Z.shift_left (Z.extract Z.minus_one 0 (size - pow)) pow) rem
 
-let constant ~size bits = { min = bits; max = bits; stride = size }
+let constant ~size bits = { min = bits; max = bits; stride = size; crafted = false }
 let zeros size = constant Z.zero ~size
 let zero = zeros 1
 let ones size = constant Z.one ~size
@@ -67,7 +77,7 @@ let uminus ~size t =
     let min = Z.extract (Z.neg (Z.signed_extract t.max 0 size)) 0 size
     and max = Z.extract (Z.neg (Z.signed_extract t.min 0 size)) 0 size
     and stride = t.stride in
-    { min; max; stride }
+    { min; max; stride; crafted = true }
 
 let add ~size t t' =
   let min = Z.add t.min t'.min
@@ -77,14 +87,14 @@ let add ~size t t' =
   let n = Z.numbits min and n' = Z.numbits max in
   if n > size then
     let min = Z.extract min 0 size and max = Z.extract max 0 size in
-    { min; max; stride }
+    { min; max; stride; crafted = true }
   else if n' > size then
     let rem =
       if stride > 0 then Z.extract (Z.add t.min t'.min) 0 stride else Z.zero
     in
     let max = round_down size stride rem in
-    { min = rem; max; stride }
-  else { min; max; stride }
+    { min = rem; max; stride; crafted = true }
+  else { min; max; stride; crafted = true }
 
 let sub ~size t t' =
   let stride = min t.stride t'.stride in
@@ -95,14 +105,14 @@ let sub ~size t t' =
   else if Z.lt t.min t'.max then
     if Z.leq t'.min t.max then
       let max = round_down size stride rem in
-      { min = rem; max; stride }
+      { min = rem; max; stride; crafted = true }
     else
       let min = Z.extract (Z.sub t.min t'.max) 0 size
       and max = Z.extract (Z.sub t.max t'.min) 0 size in
-      { min; max; stride }
+      { min; max; stride; crafted = true }
   else
     let min = Z.sub t.min t'.max and max = Z.sub t.max t'.min in
-    { min; max; stride }
+    { min; max; stride; crafted = true }
 
 let mul ~size t t' =
   let min = Z.mul t.min t'.min
@@ -121,8 +131,8 @@ let mul ~size t t' =
     let n = Z.numbits min and n' = Z.numbits max in
     if n > size || n' > size then
       let max = round_down size stride rem in
-      { min = rem; max; stride }
-    else { min; max; stride }
+      { min = rem; max; stride; crafted = true }
+    else { min; max; stride; crafted = true }
 
 let smod ~size t t' =
   if t.stride = size && t'.stride = size && not (Z.equal t'.min Z.zero) then
@@ -144,9 +154,9 @@ let umod ~size t t' =
     else if n > t.stride then
       let rem = if t.stride > 0 then Z.extract t.min 0 t.stride else Z.zero in
       let max = round_down n t.stride rem in
-      { min = rem; max; stride = t.stride }
+      { min = rem; max; stride = t.stride; crafted = true }
     else constant ~size (Z.extract t.min 0 n)
-  else { min = Z.zero; max = t'.max; stride = 0 }
+  else { min = Z.zero; max = t'.max; stride = 0; crafted = true }
 
 let sdiv ~size t t' =
   if t.stride = size && t'.stride = size && not (Z.equal t'.min Z.zero) then
@@ -169,17 +179,17 @@ let udiv ~size t t' =
       let n = Z.numbits t'.max - 1 in
       if n < t.stride then
         let stride = t.stride - n in
-        { min; max; stride }
-      else { min; max; stride = 0 }
-    else { min; max; stride = 0 }
+        { min; max; stride; crafted = true }
+      else { min; max; stride = 0; crafted = true }
+    else { min; max; stride = 0; crafted = true }
 
 let append ~size1:_ t ~size2 t' =
   let min = Z.logor (Z.shift_left t.min size2) t'.min
   and max = Z.logor (Z.shift_left t.max size2) t'.max in
   if size2 = t'.stride then
     let stride = t.stride + t'.stride in
-    { min; max; stride }
-  else { min; max; stride = t'.stride }
+    { min; max; stride; crafted = true }
+  else { min; max; stride = t'.stride; crafted = true }
 
 let top1 = top 1
 
@@ -240,7 +250,7 @@ let logand ~size t t' =
       else
         let rem = if stride > 0 then Z.extract rem 0 stride else Z.zero in
         let max = round_down n stride rem in
-        { min = rem; max; stride }
+        { min = rem; max; stride; crafted = true }
     else
       let delta, rem', n' =
         if t.stride > t'.stride then (t.stride - t'.stride, t.min, t'.stride)
@@ -252,7 +262,7 @@ let logand ~size t t' =
       else
         let rem = if stride > 0 then Z.extract rem 0 stride else Z.zero in
         let max = round_down n stride rem in
-        { min = rem; max; stride }
+        { min = rem; max; stride; crafted = true }
 
 let logor ~size t t' =
   let n = max (Z.numbits t.max) (Z.numbits t'.max) in
@@ -265,7 +275,7 @@ let logor ~size t t' =
     else
       let min = Z.logor (max t.min t'.min) rem in
       let max = round_down n stride rem in
-      { min; max; stride }
+      { min; max; stride; crafted = true }
   else
     let delta, rem, n' =
       if t.stride > t'.stride then (t.stride - t'.stride, t.min, t'.stride)
@@ -280,7 +290,7 @@ let logor ~size t t' =
     else
       let min = Z.logor (max t.min t'.min) rem in
       let max = round_down n stride rem in
-      if min = max then constant ~size min else { min; max; stride }
+      if min = max then constant ~size min else { min; max; stride; crafted = true }
 
 let logxor ~size t t' =
   let stride = min t.stride t'.stride in
@@ -291,7 +301,7 @@ let logxor ~size t t' =
   if stride >= n then constant ~size rem
   else
     let max = round_down n stride rem in
-    { min = rem; max; stride }
+    { min = rem; max; stride; crafted = true }
 
 let lognot ~size t =
   let stride = t.stride in
@@ -301,7 +311,7 @@ let lognot ~size t =
   if stride = size then constant ~size rem
   else
     let max = round_down size stride rem in
-    { min = rem; max; stride }
+    { min = rem; max; stride; crafted = true }
 
 let shift_left ~size t t' =
   if Z.geq t'.min (Z.of_int size) then zeros size
@@ -319,14 +329,15 @@ let shift_left ~size t t' =
           and max = Z.shift_left t.max delta in
           let n = Z.numbits min and n' = Z.numbits max in
           if n > size || n' > size then
-            { min = rem; max = round_down size stride rem; stride }
-          else { min; max; stride }
+            { min = rem; max = round_down size stride rem; stride; crafted = true }
+          else { min; max; stride; crafted = true }
     else
       {
         min = Z.zero;
         max = round_down size delta Z.zero;
         (* smarter? *)
         stride = delta;
+        crafted = true
       }
 
 let shift_right ~size t t' =
@@ -341,14 +352,14 @@ let shift_right ~size t t' =
       if Z.equal min max then constant ~size min
       else
         let stride = t.stride - delta in
-        if stride > 0 then { min; max; stride } else { min; max; stride = 0 }
+        if stride > 0 then { min; max; stride; crafted = true } else { min; max; stride = 0; crafted = true }
   else
     let max = Z.shift_right t.max (Z.to_int t'.min)
     and min =
       if Z.geq t'.max (Z.of_int size) then Z.zero
       else Z.shift_right t.min (Z.to_int t'.max)
     in
-    { min; max; stride = 0 }
+    { min; max; stride = 0; crafted = true }
 
 let shift_right_signed ~size t t' =
   if t.stride = size && t'.stride = size then
@@ -409,7 +420,7 @@ let restrict ~lo ~hi ~size:_ t =
       if stride >= n' then constant ~size rem
       else
         let max = round_down n' stride rem in
-        { min = rem; max; stride }
+        { min = rem; max; stride; crafted = t.crafted }
 
 let union ~size:_ t t' =
   let min = Z.min t.min t'.min
@@ -417,9 +428,9 @@ let union ~size:_ t t' =
   and stride =
     min t.stride (min t'.stride (Z.trailing_zeros (Z.logxor t.min t'.min)))
   in
-  { min; max; stride }
+  { min; max; stride; crafted = t.crafted || t'.crafted }
 
-let create size min max stride rem =
+let create size min max stride rem crafted =
   let min, max =
     if stride > 0 then
       ( (if Z.trailing_zeros (Z.logxor min rem) < stride then
@@ -438,7 +449,7 @@ let create size min max stride rem =
   in
   if Z.equal min max then constant ~size min
   else if Z.gt min max then raise Empty
-  else { min; max; stride }
+  else { min; max; stride; crafted }
 
 let inter ~size t t' =
   if Z.gt t.min t'.max || Z.lt t.max t'.min then raise Empty
@@ -451,6 +462,7 @@ let inter ~size t t' =
     else
       create size (Z.max t.min t'.min) (Z.min t.max t'.max) stride
         (if stride = 0 then Z.zero else Z.extract rem 0 stride)
+        (t.crafted && t'.crafted)
 
 let overlap t t' =
   Z.leq t.min t.max && Z.geq t.max t'.min
@@ -508,10 +520,10 @@ let diff_feedback ~size t t' r = equal_feedback ~size t t' (complement1 r)
 let ule_feedback ~size t t' r =
   if r.stride = 1 then
     if Z.equal r.min Z.zero then
-      let c = { min = t'.min; max = t.max; stride = 0 } in
+      let c = { min = t'.min; max = t.max; stride = 0; crafted = true } in
       (refine ~size t c, refine ~size t' c)
     else
-      let c = { min = t.min; max = t'.max; stride = 0 } in
+      let c = { min = t.min; max = t'.max; stride = 0; crafted = true } in
       (refine ~size t c, refine ~size t' c)
   else (t, t')
 
@@ -547,7 +559,7 @@ let logand_feedback1 ~size t r =
           0 stride
     in
     if stride = size then constant ~size rem
-    else { min = rem; max = round_down size stride rem; stride }
+    else { min = rem; max = round_down size stride rem; stride; crafted = true }
 
 let logand_feedback ~size t t' r =
   ( refine ~size t (logand_feedback1 ~size t' r),
@@ -569,7 +581,7 @@ let logor_feedback1 ~size t r =
       if stride' = 0 then Z.zero else Z.extract (Z.logor t.min r.min) 0 stride'
     in
     if stride = size then constant ~size rem
-    else { min = rem; max = round_down size stride rem; stride }
+    else { min = rem; max = round_down size stride rem; stride; crafted = true }
 
 let logor_feedback ~size t t' r =
   ( refine ~size t (logor_feedback1 ~size t' r),
@@ -627,4 +639,4 @@ let create ~size ~min ~max ~stride =
     || stride <> 0
        && not (Z.equal (Z.extract min 0 stride) (Z.extract max 0 stride))
   then raise (Invalid_argument "create")
-  else { min; max; stride }
+  else { min; max; stride; crafted = true }

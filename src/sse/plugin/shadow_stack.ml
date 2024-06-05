@@ -235,7 +235,7 @@ module Builtin (P : Path.S) (S : STATE) :
         | False state ->
             report addr target_v witness_v state;
             Error Assertion_failed
-        | Both { t; f } ->
+        | Both laz -> let { t; f } = Lazy.force laz in
             report addr target_v witness_v f;
             Ok t)
 

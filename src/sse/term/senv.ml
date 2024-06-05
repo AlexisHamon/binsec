@@ -71,10 +71,13 @@ exception Unknown = Types.Unknown
 exception Non_unique = Types.Non_unique
 exception Non_mergeable = Types.Non_mergeable
 
+type 'a both = 'a Types.both = { t : 'a ; f : 'a }
+
 type 'a test = 'a Types.test =
-  | True of 'a
-  | False of 'a
-  | Both of { t : 'a; f : 'a }
+    | True of 'a
+    | False of 'a
+    | Both of 'a both lazy_t
+
 
 (* utils *)
 
@@ -241,7 +244,7 @@ struct
       | False ->
           QS.Preprocess.incr_true ();
           Some state
-      | Unknown ->
+      | Both | Unknown ->
           let constraints = cond :: state.constraints in
           if Bitvector.zero = Model.eval state.model cond then (
             QS.Solver.start_timer ();
@@ -272,12 +275,15 @@ struct
     | Unknown -> raise Unknown
     | Unsat ->
       if Bv.is_zero e then (
+        Format.fprintf Format.std_formatter "@[<v 0>CCC FALSE@]\n";
         Overapprox.refine state cond D.zero;
         False { state with constraints })
       else (
+        Format.fprintf Format.std_formatter "@[<v 0>CCC TRUE@]\n";
         Overapprox.refine state cond D.one;
         True { state with constraints })
     | Sat model ->
+      Format.fprintf Format.std_formatter "@[<v 0>CCC BOTH@]\n";
       let t, f =
         if Bv.is_zero e then
           ( { state with constraints = to_check; model },
@@ -286,11 +292,13 @@ struct
           ( { state with constraints },
             { state with constraints = to_check; model } )
       in
+      Overapprox.refine state cond (D.union ~size:1 D.zero D.one);
       Overapprox.refine t cond D.one;
       Overapprox.refine f cond D.zero;
-      Both { t; f }
+      Both (lazy { t; f })
       
-
+  let avoided_smt = ref 0
+  let getincr () = avoided_smt := !avoided_smt + 1; !avoided_smt
   let test ?(with_smt=true) cond state =
     if Expr.is_equal cond Expr.one then (
       QS.Preprocess.incr_true ();
@@ -308,8 +316,17 @@ struct
       | False ->
           QS.Preprocess.incr_true ();
           True state
+      | Both when with_smt -> begin
+        Format.fprintf Format.std_formatter  "@[<v 0>OOO Avoided SMT %d@]\n" (getincr ());
+        let aux () = 
+        match test_smt cond state with
+          | Both s -> Lazy.force s
+          | _ -> assert(false) in
+        Both (lazy (aux ()))
+      end
+        (* Both { t=lazy (raise (Sys_error "DO")); f= lazy (raise (Sys_error "DO"))} *)
       | Unknown when with_smt -> test_smt cond state
-      | Unknown -> raise Unknown
+      | Both  | Unknown -> raise Unknown
       end
   let enumerate =
     let with_solver state e n enum except =

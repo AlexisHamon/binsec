@@ -19,16 +19,14 @@
 (*                                                                        *)
 (**************************************************************************)
 
-type t = private { min : Z.t; max : Z.t; stride : int }
+type t = private { min : Z.t; max : Z.t; stride : int; crafted : bool }
 (** Represents the unsigned fixed-width integer interval
     between [min] and [max], with [stride] fixed bits. *)
 
 include Common.S with type t := t
 
 val zeros : int -> t
-val zero : t
 val ones : int -> t
-val one : t
 val create : size:int -> min:Z.t -> max:Z.t -> stride:int -> t
 val mem : Z.t -> size:int -> t -> bool
 val iter : (Z.t -> unit) -> size:int -> t -> unit

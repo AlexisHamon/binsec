@@ -516,11 +516,12 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
             Exploration_stats.terminate_path Assertion_failed;
             Path.terminate path Assertion_failed;
             yield mode ~max_depth
-        | Both { t = state; f } ->
+        | Both laz ->
+            let { t = state ; f } = Lazy.force laz in
             Logger.error "@[<v 2> Assertion failed %@ %a@ %a@]"
-              Virtual_address.pp ip State.pp f;
+              Virtual_address.pp ip State.pp (f);
             Exploration_stats.add_failed_assert ();
-            exec mode path depth ~max_depth state ip succ)
+            exec mode path depth ~max_depth (state) ip succ)
 
   and ite :
       type a.
@@ -556,16 +557,17 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
         | False state ->
             add { path; depth; ip; state; fiber = fallthrough };
             yield mode ~max_depth
-        | Both { t = state; f = state' } ->
+        | Both laz ->
+            let { t = state; f = state' } = Lazy.force laz in
             let k = QMerge.get () in
             if k > 0 then (
               let path' = Path.fork path in
               let taken =
-                exec Merge path depth ~max_depth:(depth + k) state ip taken
+                exec Merge path depth ~max_depth:(depth + k) (state) ip taken
               in
               Path.set State.id (Path.get State.id path) path';
               let fallthrough =
-                exec Merge path' depth ~max_depth:(depth + k) state' ip
+                exec Merge path' depth ~max_depth:(depth + k) (state') ip
                   fallthrough
               in
               if taken.ip == fallthrough.ip && taken.fiber == fallthrough.fiber
@@ -593,14 +595,14 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
                 add fallthrough;
                 yield mode ~max_depth))
             else (
-              add { path; depth; ip; state; fiber = taken };
+              add { path; depth; ip; state = state; fiber = taken };
               Exploration_stats.add_path ();
               add
                 {
                   path = Path.fork path;
                   depth;
                   ip;
-                  state = state';
+                  state = (state');
                   fiber = fallthrough;
                 };
               yield mode ~max_depth))

@@ -23,7 +23,7 @@ open Common
 
 exception Empty = Empty
 
-type nonrec trilean = trilean = True | False | Unknown
+type nonrec trilean = trilean = True | False | Unknown | Both
 
 type nonrec projection = projection =
   | Top

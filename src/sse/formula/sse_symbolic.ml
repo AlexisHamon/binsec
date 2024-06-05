@@ -513,11 +513,11 @@ struct
             Solver.check_satistifiability formula' state.fmemory )
         with
         | Some model, Some model' ->
-            Both
+            Both (lazy
               {
                 t = { state with formula; fid; model };
                 f = { state with formula = formula'; fid; model = model' };
-              }
+              })
         | Some model, None -> True { state with formula; fid; model }
         | None, Some model' ->
             False { state with formula = formula'; fid; model = model' }

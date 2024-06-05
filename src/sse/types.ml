@@ -95,7 +95,13 @@ let () =
              Dba.Var.Tag.pp_attribute attr)
     | _ -> None)
 
-type 'a test = True of 'a | False of 'a | Both of { t : 'a; f : 'a }
+type 'a both = { t : 'a ; f : 'a }
+
+type 'a test =
+    | True of 'a
+    | False of 'a
+    | Both of 'a both lazy_t
+
 type 'a target = ('a * string) list option
 
 type size = Term.size

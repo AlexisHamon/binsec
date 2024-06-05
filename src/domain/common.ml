@@ -21,7 +21,7 @@
 
 exception Empty
 
-type trilean = True | False | Unknown
+type trilean = True | False | Unknown | Both
 type projection = Top | Point of Z.t | Seq of { start : Z.t; n : Z.t }
 
 module type S = sig
@@ -29,6 +29,8 @@ module type S = sig
 
   val pp : Format.formatter -> t -> unit
 
+  val crafted : t -> bool
+  
   val included : size:int -> t -> t -> bool
   (** [included  ~size t t'] tests if all values in [t] are in [t']. *)
 
