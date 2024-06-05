@@ -265,9 +265,13 @@ module type QUERY_STATISTICS = sig
   module Preprocess : sig
     val get_true : unit -> int
     val get_false : unit -> int
+    val get_both : unit -> int
+    val get_uselessboth : unit -> int
     val get_const : unit -> int
     val incr_true : unit -> unit
     val incr_false : unit -> unit
+    val incr_both : unit -> unit
+    val incr_uselessboth : unit -> unit
     val incr_const : unit -> unit
     val pp : Format.formatter -> unit -> unit
     val to_toml : unit -> Toml.Types.table

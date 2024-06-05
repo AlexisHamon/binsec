@@ -149,13 +149,19 @@ module Query () : Types.QUERY_STATISTICS = struct
   module Preprocess = struct
     let ctrue = ref 0
     let cfalse = ref 0
+    let cboth = ref 0
+    let cuselessboth = ref 0
     let const = ref 0
     let get_true () = !ctrue
     let get_false () = !cfalse
+    let get_both () = !cboth
+    let get_uselessboth () = !cuselessboth
     let get_const () = !const
-    let total () = !ctrue + !cfalse + !const
+    let total () = !ctrue + !cfalse + !cboth - !cuselessboth + !const
     let incr_true () = incr ctrue
     let incr_false () = incr cfalse
+    let incr_both () = incr cboth
+    let incr_uselessboth () = incr cuselessboth
     let incr_const () = incr const
 
     let reset () =
@@ -170,7 +176,9 @@ module Query () : Types.QUERY_STATISTICS = struct
          @[<h>total          %d@]@,\
          @[<h>true           %d@]@,\
          @[<h>false          %d@]@,\
-         @[<h>constant enum  %d@]@]" (total ()) !ctrue !cfalse !const
+         @[<h>both           %d@]@,\
+         @[<h>useless both   %d@]@,\
+         @[<h>constant enum  %d@]@]" (total ()) !ctrue !cfalse !cboth !cuselessboth !const
 
     let to_toml () =
       Toml.Min.of_key_values

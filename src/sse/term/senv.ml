@@ -300,9 +300,7 @@ struct
         { t; f } in
 
       Both (lazy (get_result ()))
-      
-  let avoided_smt = ref 0
-  let getincr () = avoided_smt := !avoided_smt + 1; !avoided_smt
+
   let test ?(with_smt=true) cond state =
     if Expr.is_equal cond Expr.one then (
       QS.Preprocess.incr_true ();
@@ -321,12 +319,13 @@ struct
           QS.Preprocess.incr_true ();
           True state
       | Both when with_smt -> begin
-        Format.fprintf Format.std_formatter  "@[<v 0>OOO Avoided SMT %d@]\n" (getincr ());
-        let aux () = 
-        match test_smt cond state with
-          | Both s -> Lazy.force s
-          | _ -> assert(false) in
-        Both (lazy (aux ()))
+          QS.Preprocess.incr_both ();
+          Format.fprintf Format.std_formatter  "@[<v 0>OOO Avoided SMT@]\n";
+          let aux () = 
+          match test_smt cond state with
+            | Both s -> QS.Preprocess.incr_uselessboth (); Lazy.force s
+            | _ -> assert(false) in
+          Both (lazy (aux ()))
       end
       | Unknown when with_smt -> test_smt cond state
       | Both  | Unknown -> raise Unknown
