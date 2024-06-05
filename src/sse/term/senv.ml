@@ -275,15 +275,12 @@ struct
     | Unknown -> raise Unknown
     | Unsat ->
       if Bv.is_zero e then (
-        Format.fprintf Format.std_formatter "@[<v 0>CCC FALSE@]\n";
         Overapprox.refine state cond D.zero;
         False { state with constraints })
       else (
-        Format.fprintf Format.std_formatter "@[<v 0>CCC TRUE@]\n";
         Overapprox.refine state cond D.one;
         True { state with constraints })
     | Sat model ->
-      Format.fprintf Format.std_formatter "@[<v 0>CCC BOTH@]\n";
       let t, f =
         if Bv.is_zero e then
           ( { state with constraints = to_check; model },
@@ -310,7 +307,6 @@ struct
       False state)
     else begin 
       let v = Overapprox.eval state cond in
-      Format.fprintf Format.std_formatter "@[<v 0>BBB %a@]\n" D.pp v ;
       match D.is_zero (v) with
       | True ->
           QS.Preprocess.incr_false ();
@@ -320,7 +316,6 @@ struct
           True state
       | Both when with_smt -> begin
           QS.Preprocess.incr_both ();
-          Format.fprintf Format.std_formatter  "@[<v 0>OOO Avoided SMT@]\n";
           let aux () = 
           match test_smt cond state with
             | Both s -> QS.Preprocess.incr_uselessboth (); Lazy.force s

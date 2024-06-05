@@ -199,7 +199,6 @@ module Make (D : Domains.S) (C : CONTEXT with type v := D.t) :
         else
           let n = inter ~size o d in
           let locked = BvSet.add e locked in
-          Format.fprintf Format.std_formatter "@[<v 0>EEE %a@]\n" D.pp n;
           C.add ctx e n;
           let dirty =
             try BvSet.union (C.find_dependency ctx e) dirty

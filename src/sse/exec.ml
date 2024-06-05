@@ -378,7 +378,6 @@ module Run (SF : STATE_FACTORY) (W : WORKLIST) () = struct
     | Symbolize { var; succ } ->
         exec mode path depth ~max_depth (Eval.fresh var state path) ip succ
     | Assign { var; rval; succ } ->
-        Logger.result "@[<v 0>%a: %s<-%a@]" Dba_printer.Ascii.pp_bl_term rval var.name Virtual_address.pp ip;
         exec mode path depth ~max_depth
           (Eval.assign var rval state path)
           ip succ

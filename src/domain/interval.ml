@@ -45,11 +45,8 @@ let included ~size:_ t t' =
 let is_zero { stride; min; max; crafted } =
   if stride > 0 then 
       if Z.testbit min 0 then False else True 
-  else if stride = 0 && Z.equal min Z.zero && Z.equal max Z.one && not crafted  then
-  begin
-    Printf.printf "BOTH CALC\n";
-    Both
-  end 
+  else if stride = 0 && Z.equal min Z.zero && Z.equal max Z.one && not crafted  
+  then Both
   else Unknown
 
 let project ~size t =
