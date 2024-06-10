@@ -124,7 +124,6 @@ module Make (Path : Path.S) (State : STATE) = struct
     | Uninterp array -> assume e (State.alloc ~array state) path
 
   let rec test e state path =
-    Format.fprintf Format.std_formatter "@[<v 0>AAA %a@]\n" Dba_printer.Ascii.pp_expr e ;
     try
     let ev, state = eval e state in
       State.test ev state with
