@@ -276,10 +276,10 @@ struct
     | Unsat ->
       if Bv.is_zero e then (
         Overapprox.refine state cond D.zero;
-        False { state with constraints })
+        False state)
       else (
         Overapprox.refine state cond D.one;
-        True { state with constraints })
+        True state)
     | Sat model ->
       let t, f =
         if Bv.is_zero e then
