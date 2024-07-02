@@ -305,6 +305,8 @@ module type S = sig
     (int -> Machine.endianness -> t -> 'b -> t) ->
     (_, 'a, 'b) term ->
     t
+
+  val pp : Format.formatter -> t -> unit
 end
 
 module Make (A : Sigs.HASHABLE) (B : Sigs.HASHABLE) :

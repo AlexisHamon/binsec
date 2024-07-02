@@ -518,6 +518,8 @@ module type S = sig
     (int -> Machine.endianness -> t -> 'b -> t) ->
     (_, 'a, 'b) term ->
     t
+
+  val pp : Format.formatter -> t -> unit
 end
 
 module Make (A : Sigs.HASHABLE) (B : Sigs.HASHABLE) :
@@ -1392,4 +1394,7 @@ module Make (A : Sigs.HASHABLE) (B : Sigs.HASHABLE) :
     | Term (Unary { f; x; _ }) -> unary f (map a b x)
     | Term (Binary { f; x; y; _ }) -> binary f (map a b x) (map a b y)
     | Term (Ite { c; t; e; _ }) -> ite (map a b c) (map a b t) (map a b e)
+  
+  let pp ppf t =
+    pp ppf t
 end
